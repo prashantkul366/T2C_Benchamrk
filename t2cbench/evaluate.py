@@ -103,6 +103,10 @@ def main() -> None:
     ap.add_argument("--no-boolean-iou", action="store_true",
                     help="skip mesh-boolean IoU; it is slow and only used to reconcile with cadrille")
     ap.add_argument("--align-icp", action="store_true", help="ablation only, see docs section 4.1")
+    ap.add_argument("--no-backfill", action="store_true",
+                    help="do not score unseen split rows as NO_OUTPUT. Only for deliberate "
+                         "subset runs such as the smoke test -- a full run MUST back-fill, "
+                         "or a model that skipped prompts scores as if it had never faced them.")
     args = ap.parse_args()
 
     split = {r["sample_id"]: r for r in _read_jsonl(args.split)}
@@ -144,8 +148,11 @@ def main() -> None:
     # prompt scores NO_OUTPUT -- silently having fewer rows would inflate its
     # scores, which is exactly the failure mode this benchmark exists to avoid.
     seen = {(t["sample_id"], t["sample_idx"]) for t in tasks}
+    if args.no_backfill:
+        print(f"back-fill disabled: scoring only the {len(tasks)} supplied predictions")
+        seen = None
     n_expected_samples = max([t["sample_idx"] for t in tasks], default=0) + 1
-    for sid, meta in split.items():
+    for sid, meta in ({}.items() if seen is None else split.items()):
         for k in range(n_expected_samples):
             if (sid, k) not in seen:
                 tasks.append({

@@ -43,6 +43,8 @@ def main() -> None:
     ap.add_argument("--n-samples", type=int, default=1)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--save-prompt", action="store_true",
+                    help="record the exact chat-formatted prompt that was sent")
     args = ap.parse_args()
 
     import torch
@@ -121,12 +123,15 @@ def main() -> None:
 
             for j, r in enumerate(batch):
                 for k in range(args.n_samples):
-                    fout.write(json.dumps({
+                    rec = {
                         "sample_id": r["sample_id"],
                         "sample_idx": k,
                         "model": args.name,
                         "output": decoded[j * args.n_samples + k],
-                    }) + "\n")
+                    }
+                    if args.save_prompt:
+                        rec["prompt_sent"] = texts[j]
+                    fout.write(json.dumps(rec) + "\n")
             fout.flush()
 
     print(f"wrote -> {args.out}")

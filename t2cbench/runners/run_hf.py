@@ -157,6 +157,9 @@ def main() -> None:
                          "which were trained on raw text without a chat wrapper")
     ap.add_argument("--max-new-tokens", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None, help="smoke-test on the first N prompts")
+    ap.add_argument("--save-prompt", action="store_true",
+                    help="record the exact formatted prompt in the output, so the template "
+                         "that was actually applied can be audited rather than assumed")
     args = ap.parse_args()
 
     cfg = load_prompts_cfg(args.prompts_cfg)
@@ -204,14 +207,17 @@ def main() -> None:
                 for p in prompts:
                     outs += generate(model, tok, [p], gen_cfg, max_new)
 
-            for r, completions in zip(batch, outs):
+            for r, prompt_str, completions in zip(batch, prompts, outs):
                 for k, text in enumerate(completions):
-                    fout.write(json.dumps({
+                    rec = {
                         "sample_id": r["sample_id"],
                         "sample_idx": k,
                         "model": args.name,
                         "output": text,
-                    }) + "\n")
+                    }
+                    if args.save_prompt:
+                        rec["prompt_sent"] = prompt_str
+                    fout.write(json.dumps(rec) + "\n")
             fout.flush()
 
     print(f"wrote -> {args.out}")
