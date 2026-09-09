@@ -21,8 +21,9 @@ import json
 import os
 import sys
 
-import torch
 from tqdm import tqdm
+
+# torch imported lazily -- see run_hf.py
 
 
 def main() -> None:
@@ -41,6 +42,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
 
+    import torch
     repo = os.path.abspath(args.cadrille_repo)
     if repo not in sys.path:
         sys.path.insert(0, repo)

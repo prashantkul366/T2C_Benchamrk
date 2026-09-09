@@ -26,9 +26,9 @@ import json
 import os
 import sys
 
-import torch
-import yaml
 from tqdm import tqdm
+
+# torch imported lazily -- see run_hf.py
 
 DEFAULT_CONFIG = {
     "text_encoder": {
@@ -56,6 +56,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
 
+    import torch
     repo = os.path.abspath(args.text2cad_repo)
     for p in (repo, os.path.join(repo, "Cad_VLM")):
         if p not in sys.path:

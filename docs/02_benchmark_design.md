@@ -35,15 +35,19 @@ T2C-Bench fixes all of that by re-running every system under one protocol.
 
 Source: DeepCAD/Text2CAD test split (8,046 uids), L0–L3 prompts from `text2cad_v1.1.csv`.
 
-Selection pipeline (`t2cbench/data/build_text2cad_split.py`):
+Selection pipeline (`t2cbench/data/build_splits.py`):
 
 1. Start from the 8,035 uids that have both a test-split prompt row and a buildable GT mesh.
-2. **Deduplicate geometrically.** DeepCAD is full of near-identical plates and blocks; a random 125
-   would be ~40% flat rectangular slabs and would flatter every model equally. For each uid:
-   normalise the GT mesh (centre bbox, scale max extent to 1), sample 4,096 surface points, compute
-   a rotation-tolerant signature (sorted eigenvalues of the covariance, D2 shape-distribution
-   histogram over 64 bins, volume/convex-hull-volume ratio, #solids). Greedily drop any uid whose
-   signature is within ε of one already kept.
+2. **Deduplicate geometrically.** DeepCAD test carries a lot of near-identical plates and blocks --
+   measured on a 220-mesh sample, 33% are flat (thinnest/longest extent < 0.15) and 32% tessellate
+   to <=24 triangles. For each uid: normalise the GT mesh (centre bbox, scale max extent to 1),
+   sample 4,096 surface points, compute a rotation-tolerant signature (sorted eigenvalues of the
+   covariance, D2 shape-distribution histogram over 64 bins, volume/convex-hull-volume ratio,
+   #solids). Greedily drop any uid whose signature is within ε of one already kept.
+   **ε = 0.08** is calibrated against the measured nearest-neighbour distance distribution
+   (p5 = 0.055, median = 0.114) and folds ~11% of shapes; the full calibration table is in
+   `t2cbench/data/dedup.py`. The default errs toward keeping shapes, because over-merging silently
+   shrinks the evaluation set's diversity and is the harder error to notice.
 3. **Stratify by complexity** into 4 bins using CAD-sequence complexity (number of extrusions ×
    number of curves, from the GT minimal JSON): `simple / moderate / complex / very_complex`.
 4. Sample **125** uids proportionally to the deduplicated bin populations, seeded (`seed=0`), so the
@@ -83,15 +87,15 @@ prompt ──► [system] ──► native output ──► [adapter] ──► 
 
 ```python
 class Adapter:
-    def to_solid(self, raw: str) -> Result:
-        """raw model output -> (solid | None, ValidityCode, diagnostic)"""
+    def run(self, raw: str, out_stl: str, extra: dict = None) -> AdapterResult:
+        """raw model output -> (mesh on disk | None, Validity, diagnostic, timing)"""
 ```
 
 | Adapter | Handles | Mechanism |
 |---|---|---|
 | `CadVecAdapter` | Text2CAD | `CADSequence.from_vec(vec, bit=8, post_processing=True).create_cad_model()` |
 | `MinimalJsonAdapter` | CADmium | brace-balanced JSON extraction → `CADSequence.from_minimal_json` |
-| `SkexGenAdapter` | CADFusion | `CADparser(bit=6).perform(seq)` → OBJ → `obj_reconverter` → solid |
+| `SkexGenAdapter` | CADFusion | `CADparser(bit=6)` → `write_obj_sample` → `OBJParser` → `OBJReconverter` → boolean ops (their pipeline verbatim) |
 | `CadQueryAdapter` | cadrille, Text-to-CadQuery, general LLMs | fenced-code extraction → sandboxed `exec` → `r.val()` or last `Workplane`/`Assembly` |
 
 All adapters run in a **subprocess with a hard timeout** (default 20 s) and a memory cap, because
@@ -110,9 +114,19 @@ A single "invalidity ratio" hides which system is failing at what. We record:
 | `TIMEOUT` | exceeded the wall-clock budget |
 | `EMPTY_SOLID` | built, but zero volume / no faces |
 | `INVALID_SOLID` | `BRepCheck_Analyzer` says not valid |
-| `NON_MANIFOLD` | mesh is not watertight after tessellation |
+| `NON_MANIFOLD` | mesh is genuinely open after tessellation (see below) |
+| `NO_OUTPUT` | the model emitted nothing at all |
 
-**IR = 1 − P(OK)**, and the breakdown is reported as a stacked bar. This is one of the more
+**Tessellation pinholes are not invalidity.** A watertight solid can still tessellate to an STL
+with a couple of unmatched edges — the poles of a sphere or a revolved surface are the usual
+culprits. Counting that as `NON_MANIFOLD` would charge an invalidity to every system that emits
+curved geometry while box-only systems go free, which is a property of the metric, not of the
+models. So a mesh is repaired and scored `OK` only when **both**: (a) it has at most
+`max(8, 0.1% of edges)` boundary edges, and (b) closing them adds less than 0.5% surface area.
+A cube missing one face passes (a) but fails (b), so it stays `NON_MANIFOLD` — the area test is
+what stops the repair from inventing geometry.
+
+**IR = 1 − P(OK)**, and the breakdown is reported as a stacked bar (grouped into 4 for legibility; the full 8 stay in the CSV). This is one of the more
 informative figures in the whole benchmark — CadQuery-emitting models fail at `EXEC_FAIL`,
 sequence-emitting models fail at `EMPTY_SOLID`, and that difference is invisible in a single number.
 
@@ -145,11 +159,16 @@ Sample **8,192** points per surface (`trimesh.sample.sample_surface`, seeded).
 | **IoU** | voxel IoU at **64³** after canonicalisation | mean |
 | **IoU-bool** | mesh-boolean IoU (cadrille's definition) | mean, cross-check only |
 | **HD95** | 95th-percentile symmetric Hausdorff | median |
-| **IR** | `1 − P(OK)`, plus the 7-way breakdown | % |
+| **IR** | `1 − P(OK)`, plus the 8-way breakdown | % |
 
 Why median CD is the headline: CD has an unbounded right tail, so one catastrophic sample moves the
 mean by more than fifty good ones. Both are reported, and the mean is what reveals whether a model
 fails *gracefully* or *catastrophically*.
+
+Both meshes always use the **same** voxel occupancy back-end: exact point-in-solid (`contains`)
+when both are watertight, surface-voxelisation-plus-fill otherwise. Mixing them would compare a
+dilated occupancy against an exact one and flatter whichever side got dilated. Which back-end was
+used is recorded per row as `iou_voxel_method`.
 
 Why voxel IoU is primary over boolean IoU: `trimesh`'s boolean intersection fails on a large
 fraction of non-watertight CAD output, and cadrille's implementation swallows that in a bare

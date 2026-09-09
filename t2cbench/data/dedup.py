@@ -1,9 +1,10 @@
 """Geometric deduplication for the Text2CAD test split.
 
-DeepCAD is dominated by near-identical flat plates and rectangular blocks. A
-uniform random 125 out of 8,046 would be roughly 40% simple slabs, which
-flatters every system equally and wastes most of the evaluation budget on
-shapes that no longer discriminate between models.
+DeepCAD test carries a lot of near-identical flat plates and rectangular blocks.
+Measured on a 220-mesh sample of the test split: **33% are flat** (thinnest
+extent / longest < 0.15) and **32% tessellate to <=24 triangles**, i.e. are
+box-like. Shapes like that stop discriminating between systems quickly, so
+folding the near-identical ones frees budget for shapes that still do.
 
 We deduplicate on a rotation-tolerant shape signature rather than on the CAD
 sequence, because two different construction sequences can produce the same
@@ -16,8 +17,26 @@ Signature (all computed after canonicalisation to [0,1]^3):
   - number of connected components                     (1)
 
 D2 is the histogram of distances between random surface point pairs. It is
-invariant to rotation and translation and cheap, which is what we need for an
-all-pairs sweep over 8k meshes.
+invariant to rotation and translation and cheap (~13 ms per mesh), which is what
+we need for a sweep over 8k meshes.
+
+Calibration of DEFAULT_EPS, measured on 220 real DeepCAD test meshes:
+
+    nearest-neighbour signature distance
+        p5 = 0.055   p25 = 0.086   median = 0.114   p75 = 0.164
+    all pairs
+        p1 = 0.128   p5  = 0.220   median = 0.598
+
+    eps    kept
+    0.05    99%      too tight -- folds essentially nothing
+    0.08    89%   <- default: just above the p5 of nearest-neighbour distance,
+    0.10    77%      so it folds genuine near-duplicates and little else
+    0.15    56%      starts merging distinct parts
+    0.20    35%      far too aggressive
+
+The default deliberately errs toward keeping shapes: over-merging silently
+shrinks the diversity of the evaluation set, which is the harder error to
+notice. Re-measure with `--eps` sweeps if you change the signature.
 """
 
 from __future__ import annotations
@@ -31,7 +50,7 @@ from t2cbench.metrics.geometry import canonicalize
 D2_BINS = 64
 D2_PAIRS = 8192
 SIG_POINTS = 4096
-DEFAULT_EPS = 0.035
+DEFAULT_EPS = 0.08
 
 
 @dataclass
@@ -112,9 +131,10 @@ def greedy_dedup(signatures: list[Signature], eps: float = DEFAULT_EPS
 def complexity_bin(n_extrusions: int, n_curves: int) -> str:
     """Complexity from the ground-truth CAD sequence.
 
-    Thresholds chosen against the DeepCAD test distribution so the four bins are
-    populated rather than equal-width; see notebooks/00_setup_data.ipynb for the
-    histogram they were read off.
+    Thresholds are heuristic, chosen so the four bins are populated rather than
+    equal-width -- `score` is heavily right-skewed, so equal-width bins would put
+    almost everything in "simple". Notebook 00 prints the realised bin sizes;
+    check them and adjust if a bin comes out near-empty on your split.
     """
     score = n_extrusions * max(n_curves, 1)
     if n_extrusions <= 1 and n_curves <= 6:

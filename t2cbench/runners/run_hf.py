@@ -24,9 +24,12 @@ import argparse
 import json
 import os
 
-import torch
 import yaml
 from tqdm import tqdm
+
+# torch / transformers are imported lazily inside the functions that need them:
+# the evaluation host is CPU-only and should not have to install a GPU stack to
+# read a config or print --help.
 
 
 def load_prompts_cfg(path: str = "configs/prompts.yaml") -> dict:
@@ -44,6 +47,7 @@ def resolve_template(cfg: dict, key: str) -> str:
 
 
 def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool):
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
@@ -89,9 +93,14 @@ def format_prompt(tok, template: str, text: str, use_chat: bool) -> str:
     return body
 
 
-@torch.inference_mode()
 def generate(model, tok, prompts: list[str], gen_cfg: dict, max_new_tokens: int) -> list[list[str]]:
     """Returns, per input prompt, a list of `num_return_sequences` completions."""
+    import torch
+    with torch.inference_mode():
+        return _generate(model, tok, prompts, gen_cfg, max_new_tokens)
+
+
+def _generate(model, tok, prompts, gen_cfg, max_new_tokens):
     enc = tok(prompts, return_tensors="pt", padding=True, truncation=True,
               max_length=4096).to(model.device)
     n_ret = gen_cfg.get("num_return_sequences", 1)
@@ -157,6 +166,7 @@ def main() -> None:
     if not todo:
         return
 
+    import torch
     if torch.cuda.is_available():
         torch.manual_seed(gen_cfg.get("seed", 0))
     model, tok = build_model(args.model, args.base, args.dtype, args.load_4bit)
