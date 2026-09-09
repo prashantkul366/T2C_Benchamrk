@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import pickle
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -32,6 +33,33 @@ from t2cbench.data.dedup import (
 )
 
 LEVELS = {"L0": "abstract", "L1": "beginner", "L2": "intermediate", "L3": "expert"}
+
+# Every one of CADPrompt's 400 prompts opens by naming the target language --
+# "Write Python code using CADQuery to create ...". That instruction is fatal to
+# a cross-representation benchmark: CADmium, Text2CAD and CADFusion do not emit
+# CadQuery, and when told to, CADmium obediently does, scoring 0/3 PARSE_FAIL for
+# following the prompt correctly. The benchmark measures text -> CAD, not
+# text -> CadQuery, so the language instruction is stripped and only the geometric
+# description is kept. The verbatim original is preserved as `prompt_original`.
+#
+# Verified to leave 0/400 prompts mentioning CadQuery or "python code"; the
+# alternatives cover the real variants in the corpus ("script"/"code",
+# "using"/"with", "to"/"for", and a "createan" typo).
+_CADQUERY_LEAD = re.compile(
+    r"^\s*write\s+(?:a\s+)?python\s+(?:code|script)\s+(?:using|with)\s+cadquery\s+"
+    r"(?:to|for)\s+(?:(?:creat|generat|mak|model|design|build|construct)\w*\s+)?",
+    re.IGNORECASE)
+
+
+def neutralise_cadprompt(text: str) -> str:
+    """Strip CADPrompt's target-language instruction, keep the geometry."""
+    text = " ".join(text.split())
+    m = _CADQUERY_LEAD.match(text)
+    if m:
+        text = text[m.end():]
+        if text:
+            text = text[0].upper() + text[1:]
+    return text
 
 T2C_CSV_REPO = "ricemonster/NeurIPS11092"
 T2C_CSV_FILE = "text2cad_v1.1.csv"
@@ -280,7 +308,8 @@ def find_cadprompt_root(start: str) -> str:
         f"no CADPrompt uid directories (8-digit dirs containing Ground_Truth.stl) under {start}")
 
 
-def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str) -> str:
+def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str,
+                  keep_language_instruction: bool = False) -> str:
     """CADPrompt, with the contamination flag that makes it usable.
 
     187 of the 200 uids are in DeepCAD's train/val split, so they were seen by
@@ -311,9 +340,11 @@ def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str) -> st
             if not os.path.exists(p):
                 continue
             with open(p, encoding="utf-8", errors="replace") as f:
-                prompt = f.read().strip()
+                raw_prompt = f.read().strip()
+            prompt = raw_prompt if keep_language_instruction else neutralise_cadprompt(raw_prompt)
             records.append({
                 "sample_id": f"B/{uid}/{vname}",
+                "prompt_original": raw_prompt,
                 "split": "B",
                 "uid": uid,
                 "level": {"plain": "L1", "measured": "L3"}[vname],  # approximate mapping
@@ -359,6 +390,10 @@ def main() -> None:
     ap.add_argument("--n-uids", type=int, default=N_UIDS)
     ap.add_argument("--eps", type=float, default=DEFAULT_EPS)
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--keep-cadquery-instruction", action="store_true",
+                    help="keep CADPrompt's 'Write Python code using CADQuery' preamble verbatim. "
+                         "Off by default: it forces every non-CadQuery system to fail for "
+                         "obeying the prompt rather than for any CAD reason.")
     ap.add_argument("--verbose-downloads", action="store_true",
                     help="re-enable HuggingFace per-file progress bars (floods a notebook)")
     args = ap.parse_args()
@@ -375,7 +410,8 @@ def main() -> None:
     if args.stage in ("all", "b"):
         if not args.cadprompt_dir:
             raise SystemExit("--cadprompt-dir is required for split B")
-        build_split_b(args.cadprompt_dir, _find_mesh_dir(paths["deepcad_meshes"]), args.out)
+        build_split_b(args.cadprompt_dir, _find_mesh_dir(paths["deepcad_meshes"]), args.out,
+                      keep_language_instruction=args.keep_cadquery_instruction)
 
 
 if __name__ == "__main__":
