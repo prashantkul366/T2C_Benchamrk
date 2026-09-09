@@ -1,0 +1,6 @@
+[
+  ["qwen25-coder-7b", "cadmium-7b"],
+  ["llama3-8b-instruct", "cadfusion-v1.1"],
+  ["qwen2-vl-2b", "cadrille"],
+  ["qwen2-vl-2b", "cadrille-rl"]
+]

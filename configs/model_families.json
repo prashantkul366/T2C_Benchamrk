@@ -1,0 +1,10 @@
+{
+  "Specialised text-to-CAD": [
+    "text2cad", "cadmium-7b", "cadfusion-v1.1", "cadrille", "cadrille-rl",
+    "t2cq-qwen-3b", "t2cq-mistral-7b"
+  ],
+  "General LLMs (zero-shot)": [
+    "qwen25-coder-7b", "llama3-8b-instruct", "qwen2-vl-2b",
+    "mistral-7b-instruct", "deepseek-coder-6.7b", "qwen25-coder-32b"
+  ]
+}
