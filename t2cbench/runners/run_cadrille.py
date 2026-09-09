@@ -37,6 +37,9 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-new-tokens", type=int, default=768)
+    ap.add_argument("--n-points", type=int, default=256,
+                    help="point-cloud width cadrille expects; 256 matches its test.py. "
+                         "Unused in text mode beyond shaping the zero tensor.")
     ap.add_argument("--n-samples", type=int, default=1)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--limit", type=int, default=None)
@@ -85,8 +88,19 @@ def main() -> None:
         for i in tqdm(range(0, len(todo), args.batch_size), desc=args.name):
             batch = todo[i:i + args.batch_size]
             texts = [_chat(processor, r["prompt"]) for r in batch]
-            enc = processor(text=texts, return_tensors="pt",
-                            padding=True, truncation=True).to(model.device)
+            # Match cadrille's own collate(): no truncation, so a long L3 prompt
+            # is never silently clipped.
+            enc = processor(text=texts, images=None, videos=None,
+                            padding=True, return_tensors="pt").to(model.device)
+
+            # Cadrille.forward calls is_pc.sum() and is_img.sum() unconditionally,
+            # so these are required even in pure text mode -- passing None raises
+            # AttributeError on the first batch. Zeros mean "no point cloud, no
+            # image", which is exactly what text mode is.
+            n = len(batch)
+            point_clouds = torch.zeros(n, args.n_points, 3, device=model.device)
+            is_pc = torch.zeros(n, dtype=torch.bool, device=model.device)
+            is_img = torch.zeros(n, dtype=torch.bool, device=model.device)
 
             kwargs = dict(max_new_tokens=args.max_new_tokens,
                           num_return_sequences=args.n_samples,
@@ -98,7 +112,9 @@ def main() -> None:
 
             with torch.inference_mode():
                 out = model.generate(input_ids=enc["input_ids"],
-                                     attention_mask=enc["attention_mask"], **kwargs)
+                                     attention_mask=enc["attention_mask"],
+                                     point_clouds=point_clouds,
+                                     is_pc=is_pc, is_img=is_img, **kwargs)
             trimmed = out[:, enc["input_ids"].shape[1]:]
             decoded = processor.batch_decode(trimmed, skip_special_tokens=True,
                                              clean_up_tokenization_spaces=False)

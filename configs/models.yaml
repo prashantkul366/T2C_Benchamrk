@@ -14,7 +14,8 @@ text2cad:
   display: "Text2CAD v1.0"
   runner: text2cad
   adapter: cadvec
-  weights: "SadilKhan/Text2CAD :: text2cad_v1.0/Text2CAD_1.0.pth"
+  weights: "SadilKhan/Text2CAD"
+  checkpoint_file: "text2cad_v1.0/Text2CAD_1.0.pth"
   gated: true            # accept the licence on the HF dataset page, export HF_TOKEN
   base_model: "bert-large-uncased + custom CAD decoder"
   params: "~90M"
@@ -41,7 +42,8 @@ cadfusion-v1.1:
   display: "CADFusion v1.1"
   runner: hf
   adapter: skexgen
-  weights: "microsoft/CADFusion :: v1_1"
+  weights: "microsoft/CADFusion"
+  subfolder: "v1_1"        # adapters live under v1_0/ and v1_1/, not the repo root
   base_model: "meta-llama/Meta-Llama-3-8B"
   gated_base: true       # Meta licence
   lora: true

@@ -190,11 +190,12 @@ login()   # paste a token with read access to the repos you accepted
     code("""
 if cfg['runner'] == 'hf':
     base = f"--base {cfg['base_model']}" if cfg.get('lora') else ''
+    sub  = f"--subfolder {cfg['subfolder']}" if cfg.get('subfolder') else ''
     chat = '' if cfg.get('chat_template', True) else '--no-chat-template'
     q4   = '--load-4bit' if cfg.get('load_4bit') else ''
     tmpl = cfg.get('template', 'general_one_shot')
     !python -m t2cbench.runners.run_hf \\
-        --model {cfg['weights'].split(' :: ')[0]} {base} \\
+        --model {cfg['weights']} {base} {sub} \\
         --name {MODEL} --template {tmpl} {chat} {q4} \\
         --split {SPLIT_FILE} --out {OUT} --mode {MODE} --batch-size 8
 
@@ -211,8 +212,7 @@ elif cfg['runner'] == 'cadrille':
 elif cfg['runner'] == 'text2cad':
     !git clone -q --depth 1 https://github.com/SadilKhan/Text2CAD /content/Text2CAD || true
     from huggingface_hub import hf_hub_download
-    ckpt = hf_hub_download('SadilKhan/Text2CAD', 'text2cad_v1.0/Text2CAD_1.0.pth',
-                           repo_type='dataset')
+    ckpt = hf_hub_download(cfg['weights'], cfg['checkpoint_file'], repo_type='dataset')
     n = 5 if MODE == 'best_of_k' else 1
     !python -m t2cbench.runners.run_text2cad \\
         --text2cad-repo /content/Text2CAD --checkpoint {ckpt} \\

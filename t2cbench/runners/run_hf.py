@@ -37,16 +37,26 @@ def load_prompts_cfg(path: str = "configs/prompts.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def resolve_template(cfg: dict, key: str) -> str:
+def resolve_template(cfg: dict, key: str) -> dict:
+    """Return {"system": str | None, "user": str} for a dotted template key.
+
+    A template is either a bare string (user turn only) or a mapping with
+    `system` and `user`. CADmium was fine-tuned with a system role carrying its
+    JSON schema; dropping it puts the model off its training distribution, so
+    the runner has to be able to send one.
+    """
     node = cfg
     for part in key.split("."):
         node = node[part]
-    if not isinstance(node, str):
-        raise KeyError(f"template {key!r} is not a string")
-    return node
+    if isinstance(node, str):
+        return {"system": None, "user": node}
+    if isinstance(node, dict) and "user" in node:
+        return {"system": node.get("system"), "user": node["user"]}
+    raise KeyError(f"template {key!r} must be a string or a mapping with a 'user' key")
 
 
-def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool):
+def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
+                subfolder: str | None = None):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -66,7 +76,10 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool):
         print(f"loading base {base}")
         model = AutoModelForCausalLM.from_pretrained(base, **kwargs)
         print(f"applying adapter {model_id}")
-        model = PeftModel.from_pretrained(model, model_id)
+        # CADFusion publishes its adapters under v1_0/ and v1_1/ rather than at
+        # the repo root, so the subfolder is not optional there -- without it
+        # peft looks for a nonexistent root adapter_config.json and fails.
+        model = PeftModel.from_pretrained(model, model_id, subfolder=subfolder)
         model = model.merge_and_unload()
         tok_src = model_id
     else:
@@ -84,13 +97,16 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool):
     return model, tok
 
 
-def format_prompt(tok, template: str, text: str, use_chat: bool) -> str:
-    body = template.format(prompt=text)
+def format_prompt(tok, template: dict, text: str, use_chat: bool) -> str:
+    body = template["user"].format(prompt=text)
+    system = template.get("system")
     if use_chat and getattr(tok, "chat_template", None):
+        messages = ([{"role": "system", "content": system}] if system else []) \
+            + [{"role": "user", "content": body}]
         return tok.apply_chat_template(
-            [{"role": "user", "content": body}],
-            tokenize=False, add_generation_prompt=True)
-    return body
+            messages, tokenize=False, add_generation_prompt=True)
+    # No chat template: a system turn has nowhere to go, so it is prepended.
+    return f"{system}\n\n{body}" if system else body
 
 
 def generate(model, tok, prompts: list[str], gen_cfg: dict, max_new_tokens: int) -> list[list[str]]:
@@ -124,6 +140,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="HF model id or local path")
     ap.add_argument("--base", default=None, help="base model when --model is a LoRA adapter")
+    ap.add_argument("--subfolder", default=None,
+                    help="subfolder holding the adapter inside --model (CADFusion uses v1_1)")
     ap.add_argument("--name", required=True, help="short name used in every results table")
     ap.add_argument("--split", required=True)
     ap.add_argument("--out", required=True)
@@ -169,7 +187,8 @@ def main() -> None:
     import torch
     if torch.cuda.is_available():
         torch.manual_seed(gen_cfg.get("seed", 0))
-    model, tok = build_model(args.model, args.base, args.dtype, args.load_4bit)
+    model, tok = build_model(args.model, args.base, args.dtype, args.load_4bit,
+                             subfolder=args.subfolder)
 
     with open(args.out, "a") as fout:
         for i in tqdm(range(0, len(todo), args.batch_size), desc=args.name):

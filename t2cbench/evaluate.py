@@ -97,7 +97,7 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--model-name", default=None)
     ap.add_argument("--workers", type=int, default=8)
-    ap.add_argument("--timeout", type=float, default=20.0)
+    ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--keep-meshes", default=None,
                     help="directory to keep predicted STLs in (needed for the qualitative figure)")
     ap.add_argument("--no-boolean-iou", action="store_true",
@@ -193,6 +193,15 @@ def _summary(rows: list) -> None:
     print(f"\n  n={n}  P(usable)={ok/n:.3f}  IR={1-counts.get('OK',0)/n:.3f}")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"    {k:16s} {v:5d}  {v/n*100:5.1f}%")
+    # A TIMEOUT is counted as a model failure, so a meaningful timeout rate means
+    # the numbers are partly measuring the machine. Say so rather than letting it
+    # pass as a model result.
+    n_timeout = counts.get("TIMEOUT", 0)
+    if n_timeout and n_timeout / n > 0.02:
+        print(f"\n  !! {n_timeout} TIMEOUTs ({n_timeout/n*100:.1f}%) -- these are scored as")
+        print( "     failures. Re-run with a larger --timeout and/or fewer --workers")
+        print( "     before trusting these numbers; a loaded machine looks like a bad model.")
+
     cds = [r["cd"] for r in rows if r.get("scored") and r.get("cd") is not None]
     if cds:
         print(f"  CD median={np.median(cds):.3f}  mean={np.mean(cds):.3f}  (x1000, n={len(cds)})")
