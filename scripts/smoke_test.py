@@ -130,7 +130,7 @@ def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int,
                 "--checkpoint", repos["text2cad_ckpt"], "--name", name,
                 "--split", split_file, "--out", out,
                 "--batch-size", "4", "--n-samples", "1", "--limit", str(n),
-                "--save-prompt"]
+                "--save-prompt", "--stub-occ"]
     return None
 
 
