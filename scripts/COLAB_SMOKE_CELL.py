@@ -50,7 +50,10 @@ print("\n=== installing the pinned stack (a few minutes) ===", flush=True)
 sh("pip uninstall -q -y torchao 2>/dev/null; "
    "pip install -q 'transformers==4.50.3' 'peft==0.15.2' 'accelerate>=1.0,<2' "
    "'tokenizers>=0.21,<0.22' sentencepiece qwen-vl-utils==0.0.10 "
-   "plyfile prettytable trimesh scikit-learn joblib seaborn pyyaml tqdm 2>&1 | tail -3")
+   # Text2CAD's model modules import all of these at module scope. Each one was
+   # found by a separate failed run, so the list is empirical, not defensive.
+   "plyfile prettytable trimesh scikit-learn joblib seaborn loguru rich "
+   "pyyaml tqdm 2>&1 | tail -3")
 
 print("\n=== verifying pins BEFORE spending GPU time ===")
 ok = True
