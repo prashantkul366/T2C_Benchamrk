@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 import re
+import glob
 import subprocess
 import sys
 import textwrap
@@ -466,6 +467,19 @@ def phase_export(work: str, models: list[str], max_chars: int) -> None:
     notes = _load_notes(work)
     payload = {"format": "t2c-smoke-export/1", "generations": [], "failures": []}
 
+    # The recorded prompt is the *formatted* one, which for CADmium is mostly a
+    # 2.3 kB JSON schema. Carry the split's plain description too, so a reader
+    # (or a figure) can see the task without unpicking chat scaffolding.
+    task = {}
+    for split in SPLITS:
+        d = os.path.join(work, "smoke", "splits")
+        files = sorted(glob.glob(os.path.join(d, f"split_{split.lower()}_smoke*.jsonl"))) \
+            if os.path.isdir(d) else []
+        files = files or ([split_path(work, split)] if os.path.exists(split_path(work, split)) else [])
+        for fp in files:
+            for r in read_jsonl(fp):
+                task.setdefault(r["sample_id"], r.get("prompt", ""))
+
     for model in models:
         cfg = reg.get(model)
         if cfg is None:
@@ -494,6 +508,7 @@ def phase_export(work: str, models: list[str], max_chars: int) -> None:
                     "prompt_head": sent[:300],
                     "prompt_tail": sent[-200:] if len(sent) > 500 else "",
                     "prompt_len": len(sent),
+                    "prompt_text": task.get(r["sample_id"], ""),
                     "output": out[:max_chars],
                     "output_len": len(out),
                     "truncated": len(out) > max_chars,
