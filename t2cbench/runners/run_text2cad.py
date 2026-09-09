@@ -41,6 +41,99 @@ DEFAULT_CONFIG = {
 }
 
 
+def _install_occ_stub() -> None:
+    """Satisfy Text2CAD's module-scope `from OCC.Core.X import Y` without pythonocc.
+
+    Generation needs a GPU; pythonocc needs conda. Putting both in one Colab
+    runtime is a fight not worth having for a dependency the decode path does not
+    use -- `Cad_VLM/models/layers/utils_decode.py` imports OCC at the top, but
+    every OCC-touching function in it (brep2mesh, write_stl_file, plot, ...) is a
+    geometry helper, and `model.test_decode` calls none of them.
+
+    The stub is a poison pill, not a no-op: importing a name works, *using* one
+    raises. So if that assumption is ever wrong, the run dies with a clear error
+    instead of quietly producing geometry built from fake primitives.
+    """
+    import sys
+    import types
+
+    try:
+        import OCC  # noqa: F401
+        print("pythonocc is present; --stub-occ ignored")
+        return
+    except ImportError:
+        pass
+
+    # Dunders must behave normally. Python's own machinery (inspect, importlib,
+    # pickle) walks sys.modules and reads __file__, __path__, __spec__ and
+    # friends on every module it meets, so poisoning those turns an unrelated
+    # `import torch` into a spurious "Text2CAD touched OCC" failure.
+    def _is_dunder(name: str) -> bool:
+        return name.startswith("__") and name.endswith("__")
+
+    class _Poison:
+        def __init__(self, name):
+            object.__setattr__(self, "_name", name)
+
+        def _die(self, *a, **k):
+            raise RuntimeError(
+                f"Text2CAD generation touched OCC ({self._name}), which --stub-occ "
+                f"assumed it never does. Re-run in an environment with pythonocc-core.")
+
+        __call__ = _die
+
+        def __getattr__(self, k):
+            if _is_dunder(k):
+                raise AttributeError(k)
+            return _Poison(f"{self._name}.{k}")
+
+    class _StubModule(types.ModuleType):
+        def __init__(self, name):
+            super().__init__(name)
+            # Marks the stub as a package so `from OCC.Core.BRepMesh import X`
+            # is allowed to descend into it; without __path__ the import system
+            # rejects the submodule before the finder below is ever consulted.
+            self.__path__ = []
+
+        def __getattr__(self, name):
+            if _is_dunder(name):
+                raise AttributeError(name)
+            return _Poison(f"{self.__name__}.{name}")
+
+    for mod in ("OCC", "OCC.Core", "OCC.Display", "OCC.Extend"):
+        sys.modules.setdefault(mod, _StubModule(mod))
+
+    # Any OCC.Core.* / OCC.Display.* submodule resolves to a stub on demand.
+    class _StubFinder:
+        def find_module(self, fullname, path=None):
+            return self if fullname.startswith("OCC.") else None
+
+        def load_module(self, fullname):
+            m = sys.modules.get(fullname) or _StubModule(fullname)
+            sys.modules[fullname] = m
+            return m
+
+        def find_spec(self, fullname, path=None, target=None):
+            if not fullname.startswith("OCC."):
+                return None
+            import importlib.machinery
+            return importlib.machinery.ModuleSpec(fullname, _StubLoader())
+
+    class _StubLoader:
+        def create_module(self, spec):
+            return _StubModule(spec.name)
+
+        def exec_module(self, module):
+            return None
+
+        def is_package(self, fullname):
+            return True
+
+    sys.meta_path.insert(0, _StubFinder())
+    print("!! pythonocc absent: installed a poison-pill OCC stub for generation only.\n"
+          "   Scoring still requires a real pythonocc environment.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--text2cad-repo", required=True,
@@ -56,9 +149,15 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--save-prompt", action="store_true",
                     help="record the prompt text that was sent (Text2CAD takes it raw)")
+    ap.add_argument("--stub-occ", action="store_true",
+                    help="install a poison-pill OCC stub when pythonocc is absent. Text2CAD's "
+                         "utils_decode imports OCC at module scope but the decode path never "
+                         "calls it; the stub raises loudly if that assumption is ever wrong.")
     args = ap.parse_args()
 
     import torch
+    if args.stub_occ:
+        _install_occ_stub()
     repo = os.path.abspath(args.text2cad_repo)
     for p in (repo, os.path.join(repo, "Cad_VLM")):
         if p not in sys.path:
