@@ -1,0 +1,174 @@
+# Model registry. Adding or removing a model is one block here plus a line in
+# scripts/run_all.sh -- nothing else in the harness knows model names.
+#
+# `adapter` decides how the output is turned into geometry.
+# `runner`  decides which generation script drives it.
+# `template` is a dotted key into configs/prompts.yaml.
+
+# =========================================================================== #
+# Specialised text-to-CAD systems
+# =========================================================================== #
+
+text2cad:
+  name: text2cad
+  display: "Text2CAD v1.0"
+  runner: text2cad
+  adapter: cadvec
+  weights: "SadilKhan/Text2CAD :: text2cad_v1.0/Text2CAD_1.0.pth"
+  gated: true            # accept the licence on the HF dataset page, export HF_TOKEN
+  base_model: "bert-large-uncased + custom CAD decoder"
+  params: "~90M"
+  trained_on: "DeepCAD train + Text2CAD L0-L3 annotations"
+  max_new_tokens: 272
+  notes: "Native L0-L3 prompts. The only system trained on all four levels."
+
+cadmium-7b:
+  name: cadmium-7b
+  display: "CADmium-7B"
+  runner: hf
+  adapter: minimal_json
+  weights: "chandar-lab/CADmium-7B"
+  base_model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  lora: true
+  params: "7B (LoRA r=64)"
+  trained_on: "CADmium-ds: 176k GPT-4.1 descriptions of DeepCAD sequences"
+  template: native.cadmium
+  chat_template: true
+  notes: "Trained on its own paraphrases, not Text2CAD L0-L3 -- expect a distribution-shift penalty."
+
+cadfusion-v1.1:
+  name: cadfusion-v1.1
+  display: "CADFusion v1.1"
+  runner: hf
+  adapter: skexgen
+  weights: "microsoft/CADFusion :: v1_1"
+  base_model: "meta-llama/Meta-Llama-3-8B"
+  gated_base: true       # Meta licence
+  lora: true
+  params: "8B (LoRA r=32, q/v only)"
+  trained_on: "SkexGen + LLM captions"
+  template: native.cadfusion
+  chat_template: false   # trained on raw text, no chat wrapper
+  max_new_tokens: 512
+  notes: "SPLIT UNVERIFIED -- SkexGen's train/test boundary is not DeepCAD's. Flag in results."
+
+cadrille:
+  name: cadrille
+  display: "cadrille (SFT)"
+  runner: cadrille
+  adapter: cadquery
+  weights: "maksimko123/cadrille"
+  base_model: "Qwen/Qwen2-VL-2B-Instruct"
+  params: "2B"
+  trained_on: "Text2CAD train/val + CAD-Recode v1.5"
+  max_new_tokens: 768
+  notes: "Text mode only here. Published text numbers are best-of-N; we report pass@1 separately."
+
+cadrille-rl:
+  name: cadrille-rl
+  display: "cadrille (RL)"
+  runner: cadrille
+  adapter: cadquery
+  weights: "maksimko123/cadrille-rl"
+  base_model: "Qwen/Qwen2-VL-2B-Instruct"
+  params: "2B"
+  max_new_tokens: 768
+
+t2cq-qwen-3b:
+  name: t2cq-qwen-3b
+  display: "Text-to-CadQuery (Qwen2.5-3B)"
+  runner: hf
+  adapter: cadquery
+  weights: "ricemonster/qwen2.5-3B-SFT"
+  base_model: "Qwen/Qwen2.5-3B"
+  params: "3B"
+  trained_on: "170k Gemini-annotated CadQuery programs on Text2CAD"
+  template: native.text2cadquery
+  chat_template: false
+
+t2cq-mistral-7b:
+  name: t2cq-mistral-7b
+  display: "Text-to-CadQuery (Mistral-7B)"
+  runner: hf
+  adapter: cadquery
+  weights: "ricemonster/Mistral-7B-lora"
+  base_model: "mistralai/Mistral-7B-v0.3"
+  lora: true
+  params: "7B (LoRA)"
+  template: native.text2cadquery
+  chat_template: false
+
+# =========================================================================== #
+# General LLM baselines.
+#
+# The first three are the *base models* of CADmium, CADFusion and cadrille.
+# Running them turns the benchmark into three controlled ablations: same
+# weights, same prompts, same metrics, fine-tuning the only difference. That is
+# the strongest claim available here and it costs no extra engineering.
+# =========================================================================== #
+
+qwen25-coder-7b:
+  name: qwen25-coder-7b
+  display: "Qwen2.5-Coder-7B-Instruct"
+  runner: hf
+  adapter: cadquery
+  weights: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  params: "7B"
+  template: general_one_shot
+  chat_template: true
+  ablation_pair_for: cadmium-7b     # <- base of CADmium
+
+llama3-8b-instruct:
+  name: llama3-8b-instruct
+  display: "Llama-3-8B-Instruct"
+  runner: hf
+  adapter: cadquery
+  weights: "meta-llama/Meta-Llama-3-8B-Instruct"
+  gated: true
+  params: "8B"
+  template: general_one_shot
+  chat_template: true
+  ablation_pair_for: cadfusion-v1.1  # <- base family of CADFusion
+
+qwen2-vl-2b:
+  name: qwen2-vl-2b
+  display: "Qwen2-VL-2B-Instruct"
+  runner: hf
+  adapter: cadquery
+  weights: "Qwen/Qwen2-VL-2B-Instruct"
+  params: "2B"
+  template: general_one_shot
+  chat_template: true
+  ablation_pair_for: cadrille        # <- base of cadrille
+
+mistral-7b-instruct:
+  name: mistral-7b-instruct
+  display: "Mistral-7B-Instruct-v0.3"
+  runner: hf
+  adapter: cadquery
+  weights: "mistralai/Mistral-7B-Instruct-v0.3"
+  params: "7B"
+  template: general_one_shot
+  chat_template: true
+
+deepseek-coder-6.7b:
+  name: deepseek-coder-6.7b
+  display: "DeepSeek-Coder-6.7B-Instruct"
+  runner: hf
+  adapter: cadquery
+  weights: "deepseek-ai/deepseek-coder-6.7b-instruct"
+  params: "6.7B"
+  template: general_one_shot
+  chat_template: true
+
+qwen25-coder-32b:
+  name: qwen25-coder-32b
+  display: "Qwen2.5-Coder-32B-Instruct (4-bit)"
+  runner: hf
+  adapter: cadquery
+  weights: "Qwen/Qwen2.5-Coder-32B-Instruct"
+  params: "32B"
+  template: general_one_shot
+  chat_template: true
+  load_4bit: true       # ~20 GB, fits a 40 GB A100
+  optional: true        # scale reference; skip if GPU hours are tight

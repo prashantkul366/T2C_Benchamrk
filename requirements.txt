@@ -1,0 +1,23 @@
+# Core evaluation (CPU). Install these anywhere you compute metrics.
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+trimesh>=4.0
+rtree>=1.0            # trimesh voxel/contains acceleration
+matplotlib>=3.7
+tqdm>=4.65
+pyyaml>=6.0
+tabulate>=0.9         # pandas .to_markdown
+huggingface_hub>=0.23
+
+# Geometry kernels. cadquery pulls OCP; pythonocc-core is needed by the
+# Text2CAD/CADmium/CADFusion sequence adapters and is conda-only:
+#   conda install -c conda-forge pythonocc-core=7.7.0
+cadquery>=2.4
+
+# Generation (GPU). Not needed on the evaluation host.
+# torch>=2.3
+# transformers>=4.45
+# accelerate>=0.30
+# peft>=0.11
+# bitsandbytes>=0.43   # only for --load-4bit

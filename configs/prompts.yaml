@@ -1,0 +1,108 @@
+# Prompt templates.
+#
+# Every system that consumes plain text gets its prompt from here, so a model is
+# never penalised for a formatting convention it was never told about, and no
+# model gets a hand-tuned prompt the others do not.
+#
+# `{prompt}` is substituted with the split's text. Nothing else is.
+
+# --------------------------------------------------------------------------- #
+# Native templates: reproduce each system's own training-time format verbatim.
+# Changing these breaks comparability with the published numbers, so they are
+# transcribed from the repos rather than written fresh.
+# --------------------------------------------------------------------------- #
+
+native:
+  cadmium: |
+    You are a CAD assistant. Convert the following natural language description
+    into a minimal JSON CAD construction sequence.
+
+    Description: {prompt}
+
+    JSON:
+
+  # CADFusion src/test/inference.py, verbatim.
+  cadfusion: |
+    Below is a description of a 3D shape:
+    {prompt}
+    Generate a Computer-Aided Design(CAD) command sequence of the 3D shape:
+
+  # Text-to-CadQuery inference/step1_*: the fine-tuned models were trained on the
+  # bare description with no instruction wrapper.
+  text2cadquery: "{prompt}"
+
+  # cadrille builds its own chat template in cadrille.py; the runner defers to it.
+  cadrille: "{prompt}"
+
+# --------------------------------------------------------------------------- #
+# General-LLM templates. Identical for every general model.
+#
+# Two variants are run. The 1-shot number is the headline (it measures CAD
+# ability rather than format compliance); the 0-shot number quantifies how much
+# of the gap was only ever about output formatting.
+# --------------------------------------------------------------------------- #
+
+general_zero_shot: |
+  Write a CadQuery (Python) script that builds the 3D CAD model described below.
+
+  Requirements:
+  - Use only the `cadquery` library, imported as `cq`.
+  - Assign the final solid to a variable named `r`.
+  - Output a single Python code block and nothing else. No explanation.
+
+  Description:
+  {prompt}
+
+general_one_shot: |
+  Write a CadQuery (Python) script that builds the 3D CAD model described below.
+
+  Requirements:
+  - Use only the `cadquery` library, imported as `cq`.
+  - Assign the final solid to a variable named `r`.
+  - Output a single Python code block and nothing else. No explanation.
+
+  Example
+  -------
+  Description: A rectangular plate 0.75 wide, 0.5 deep and 0.05 thick, with a
+  through hole of radius 0.08 at its centre.
+
+  ```python
+  import cadquery as cq
+  r = (
+      cq.Workplane("XY")
+      .box(0.75, 0.5, 0.05)
+      .faces(">Z")
+      .workplane()
+      .hole(0.16)
+  )
+  ```
+
+  Now do the same for this description.
+  -------
+  Description:
+  {prompt}
+
+# --------------------------------------------------------------------------- #
+# Generation settings. Fixed across every system: same budget, same policy.
+# --------------------------------------------------------------------------- #
+
+generation:
+  pass_at_1:
+    do_sample: false
+    temperature: 0.0
+    num_return_sequences: 1
+  best_of_k:
+    do_sample: true
+    temperature: 0.7
+    top_p: 0.95
+    num_return_sequences: 5
+    seed: 0
+
+  # Per-system token budgets. These are architectural or trained limits, not
+  # tuning knobs: raising them past the trained limit produces garbage, lowering
+  # them truncates. They are the one setting that legitimately differs.
+  max_new_tokens:
+    default: 1024
+    cadrille: 768        # its trained generation length
+    cadfusion: 512       # src/test/utils.py MAX_LENGTH
+    text2cad: 272        # MAX_CAD_SEQUENCE_LENGTH, architectural

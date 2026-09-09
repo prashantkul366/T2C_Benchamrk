@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+data/hf_cache/
+data/*.pkl
+data/cache_*
+results/raw/
+results/scored/
+results/meshes/
+work_dirs/
+*.stl
+*.step
+*.pth
+*.safetensors
+.env
