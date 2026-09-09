@@ -54,6 +54,8 @@ def main() -> None:
     ap.add_argument("--n-samples", type=int, default=1,
                     help="1 = greedy pass@1; 5 = the paper's best-of-5 topk sweep")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--save-prompt", action="store_true",
+                    help="record the prompt text that was sent (Text2CAD takes it raw)")
     args = ap.parse_args()
 
     import torch
@@ -116,14 +118,17 @@ def main() -> None:
                 )
                 vecs = pred["cad_vec"].cpu().numpy()
                 for j, r in enumerate(batch):
-                    fout.write(json.dumps({
+                    rec = {
                         "sample_id": r["sample_id"],
                         "sample_idx": k,
                         "model": args.name,
                         # serialised so CadVecAdapter has the same string-in
                         # interface as every other adapter
                         "output": json.dumps(vecs[j].astype(int).tolist()),
-                    }) + "\n")
+                    }
+                    if args.save_prompt:
+                        rec["prompt_sent"] = texts[j]
+                    fout.write(json.dumps(rec) + "\n")
             fout.flush()
 
     print(f"wrote -> {args.out}")

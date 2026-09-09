@@ -22,7 +22,11 @@ from abc import ABC, abstractmethod
 
 from t2cbench.metrics.validity import AdapterResult, Validity
 
-DEFAULT_TIMEOUT_S = 20.0
+# 60s, not 20s. Roughly 2-3s of every call is process fork plus the CadQuery/OCP
+# import, before any geometry is attempted, and that grows sharply when many
+# workers contend. A TIMEOUT is scored as a model failure, so a timeout budget
+# that is merely tight quietly turns machine load into a worse benchmark score.
+DEFAULT_TIMEOUT_S = 60.0
 
 # "fork" on POSIX: it does not re-import __main__, so adapters work from a
 # notebook cell, a heredoc, or `python -c` -- all of which break "spawn" with

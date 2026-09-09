@@ -46,19 +46,36 @@ SEED = 0
 # Downloads
 # --------------------------------------------------------------------------- #
 
-def fetch_assets(cache: str) -> dict:
-    """Pull the ungated assets. Returns local paths."""
+def fetch_assets(cache: str, quiet: bool = True) -> dict:
+    """Pull the ungated assets. Returns local paths.
+
+    `quiet` disables HuggingFace's per-file progress bars. The DeepCAD mesh
+    snapshot is 8,048 separate files, and 8,048 progress bars is what makes a
+    Colab cell look like it has hung -- the notebook front-end spends all its
+    time rendering output instead of the download being slow. Leave it on.
+    """
     from huggingface_hub import hf_hub_download, snapshot_download
+    if quiet:
+        # The runtime API rather than HF_HUB_DISABLE_PROGRESS_BARS: the env var
+        # is read at import time by older huggingface_hub versions, so setting
+        # it after `import huggingface_hub` (which a notebook has usually done
+        # already) silently does nothing there.
+        from huggingface_hub.utils import disable_progress_bars
+        disable_progress_bars()
 
     os.makedirs(cache, exist_ok=True)
     paths = {}
 
+    print(f"[fetch] {T2C_CSV_FILE} (1.3 GB, one file) ...", flush=True)
     paths["t2c_csv"] = hf_hub_download(
         T2C_CSV_REPO, T2C_CSV_FILE, repo_type="model", cache_dir=cache)
 
+    print("[fetch] DeepCAD test meshes (260 MB in 8,048 files, ~3-6 min) ...", flush=True)
     paths["deepcad_meshes"] = snapshot_download(
-        DEEPCAD_MESH_REPO, repo_type="dataset", cache_dir=cache)
+        DEEPCAD_MESH_REPO, repo_type="dataset", cache_dir=cache,
+        max_workers=16)
 
+    print("[fetch] CadQuery ground truth (83 MB) ...", flush=True)
     zip_path = hf_hub_download(
         CADQUERY_GT_REPO, "text2cad.zip", repo_type="dataset", cache_dir=cache)
     cq_dir = os.path.join(cache, "text2cad_cadquery")
@@ -67,6 +84,7 @@ def fetch_assets(cache: str) -> dict:
         with zipfile.ZipFile(zip_path) as z:
             z.extractall(cq_dir)
     paths["cadquery_gt"] = cq_dir
+    print("[fetch] done", flush=True)
     return paths
 
 
@@ -94,16 +112,29 @@ def build_split_a(paths: dict, out_dir: str, n_uids: int = N_UIDS,
     print(f"[split A] {len(uids)} DeepCAD test meshes")
 
     # --- prompts ---------------------------------------------------------- #
-    print(f"[split A] reading {T2C_CSV_FILE} (1.3 GB, streamed)")
-    wanted = set(uids)
-    rows = []
-    usecols = ["uid"] + list(LEVELS.values())
-    for chunk in pd.read_csv(paths["t2c_csv"], usecols=usecols, chunksize=20000):
-        # csv uid is "0035/00359148"; mesh uid is "00359148"
-        chunk["short_uid"] = chunk["uid"].astype(str).str.split("/").str[-1]
-        rows.append(chunk[chunk["short_uid"].isin(wanted)])
-    prompts = pd.concat(rows, ignore_index=True).drop_duplicates("short_uid")
-    prompts = prompts.set_index("short_uid")
+    # Cached: keeping ~8k of 171k rows out of a 1.3 GB CSV takes a few minutes,
+    # and there is no reason to pay it twice.
+    prompt_cache = os.path.join(out_dir, "cache_prompts.parquet")
+    if os.path.exists(prompt_cache):
+        prompts = pd.read_parquet(prompt_cache).set_index("short_uid")
+        print(f"[split A] loaded {len(prompts)} cached prompt rows")
+    else:
+        print(f"[split A] streaming {T2C_CSV_FILE} (1.3 GB, ~9 chunks of 20k rows)", flush=True)
+        wanted = set(uids)
+        rows = []
+        usecols = ["uid"] + list(LEVELS.values())
+        for i, chunk in enumerate(pd.read_csv(paths["t2c_csv"], usecols=usecols,
+                                              chunksize=20000)):
+            # csv uid is "0035/00359148"; mesh uid is "00359148"
+            chunk["short_uid"] = chunk["uid"].astype(str).str.split("/").str[-1]
+            hit = chunk[chunk["short_uid"].isin(wanted)]
+            rows.append(hit)
+            print(f"  chunk {i:>3}  +{len(hit):>5} matched  "
+                  f"({sum(len(r) for r in rows)} total)", flush=True)
+        prompts = pd.concat(rows, ignore_index=True).drop_duplicates("short_uid")
+        os.makedirs(out_dir, exist_ok=True)
+        prompts.to_parquet(prompt_cache, index=False)
+        prompts = prompts.set_index("short_uid")
     print(f"[split A] prompts found for {len(prompts)} / {len(uids)} uids")
 
     # keep only uids with all four levels non-empty
@@ -127,7 +158,8 @@ def build_split_a(paths: dict, out_dir: str, n_uids: int = N_UIDS,
         jobs = [(u, os.path.join(mesh_dir, f"{u}.stl")) for u in uids]
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = [ex.submit(_signature_job, j) for j in jobs]
-            for fut in tqdm(as_completed(futs), total=len(futs), desc="signatures"):
+            for fut in tqdm(as_completed(futs), total=len(futs), desc="signatures",
+                            mininterval=5.0, miniters=200):
                 uid, vec = fut.result()
                 if vec is not None:
                     sig_map[uid] = vec
@@ -227,6 +259,27 @@ def _complexity_from_cadquery(py_path: str) -> tuple[int, int]:
 # Split B: CADPrompt
 # --------------------------------------------------------------------------- #
 
+def find_cadprompt_root(start: str) -> str:
+    """Locate the directory that actually holds the 8-digit uid folders.
+
+    The CAD_Code_Generation checkout is not consistent about nesting: some
+    clones expose `CADPrompt/00000007/`, others `CADPrompt/CADPrompt/00000007/`.
+    Guessing wrong yields an empty split rather than an error, so search instead
+    of assuming.
+    """
+    start = os.path.abspath(start)
+    for root, dirs, _ in os.walk(start):
+        hits = [d for d in dirs
+                if d.isdigit() and len(d) == 8
+                and os.path.exists(os.path.join(root, d, "Ground_Truth.stl"))]
+        if len(hits) >= 10:
+            if root != start:
+                print(f"[split B] uid directories found under {root}")
+            return root
+    raise FileNotFoundError(
+        f"no CADPrompt uid directories (8-digit dirs containing Ground_Truth.stl) under {start}")
+
+
 def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str) -> str:
     """CADPrompt, with the contamination flag that makes it usable.
 
@@ -234,6 +287,7 @@ def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str) -> st
     every fine-tuned system here and by none of the general LLMs. Flagging each
     row turns a misleading aggregate into a memorisation probe.
     """
+    cadprompt_dir = find_cadprompt_root(cadprompt_dir)
     test_uids = {f[:-4] for f in os.listdir(deepcad_mesh_dir) if f.endswith(".stl")}
     uids = sorted(d for d in os.listdir(cadprompt_dir)
                   if d.isdigit() and os.path.isdir(os.path.join(cadprompt_dir, d)))
@@ -305,10 +359,12 @@ def main() -> None:
     ap.add_argument("--n-uids", type=int, default=N_UIDS)
     ap.add_argument("--eps", type=float, default=DEFAULT_EPS)
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--verbose-downloads", action="store_true",
+                    help="re-enable HuggingFace per-file progress bars (floods a notebook)")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    paths = fetch_assets(args.cache)
+    paths = fetch_assets(args.cache, quiet=not args.verbose_downloads)
     print(json.dumps({k: str(v) for k, v in paths.items()}, indent=2))
     if args.stage == "fetch":
         return

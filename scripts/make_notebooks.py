@@ -48,8 +48,10 @@ WORK = '/content/drive/MyDrive/t2c_bench'
 os.makedirs(WORK, exist_ok=True)
 os.environ['T2C_WORK'] = WORK
 
-!git clone -q {REPO} /content/t2cbench_repo || (cd /content/t2cbench_repo && git pull -q)
+BRANCH = 'main'   # set to a branch name to pick up work not yet merged
+!git clone -q {REPO} /content/t2cbench_repo 2>/dev/null || true
 %cd /content/t2cbench_repo
+!git fetch -q origin && git checkout -q $BRANCH && git pull -q origin $BRANCH
 !pip install -q -e . 2>/dev/null || pip install -q -r requirements.txt
 print('work dir:', WORK)
 """
@@ -158,15 +160,24 @@ Set `MODEL` in the config cell and run top to bottom. Order below is cheapest fi
 MODEL = 'cadmium-7b'  #@param ['text2cad','cadmium-7b','cadfusion-v1.1','cadrille','cadrille-rl','t2cq-qwen-3b','t2cq-mistral-7b']
 SPLIT = 'A'           #@param ['A','B']
 MODE  = 'pass_at_1'   #@param ['pass_at_1','best_of_k']
+LIMIT = 8             #@param {type:'integer'}
+# LIMIT = 8 is a SMOKE TEST: 8 prompts, ~1 min, and you get to look at the raw
+# output before committing an hour of A100 time to a model whose weights or
+# prompt format might be wrong. Set LIMIT = 0 for the full split once the
+# smoke-test output looks like the right representation.
 
 import yaml, os
 cfg = yaml.safe_load(open('configs/models.yaml'))[MODEL]
 SPLIT_FILE = f"{os.environ['T2C_WORK']}/data/split_{SPLIT.lower()}.jsonl"
-OUT = f"{os.environ['T2C_WORK']}/results/raw/{MODEL}_split{SPLIT}_{MODE}.jsonl"
+suffix = f'_smoke{LIMIT}' if LIMIT else ''
+OUT = f"{os.environ['T2C_WORK']}/results/raw/{MODEL}_split{SPLIT}_{MODE}{suffix}.jsonl"
+LIM = f'--limit {LIMIT}' if LIMIT else ''
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 print(yaml.dump(cfg, sort_keys=False))
 print('split :', SPLIT_FILE)
 print('output:', OUT)
+print('mode  :', 'SMOKE TEST' if LIMIT else 'FULL RUN')
+# Smoke-test output goes to its own file so it never contaminates a full run.
 """),
     code("""
 !pip install -q transformers accelerate peft bitsandbytes sentencepiece
@@ -190,12 +201,13 @@ login()   # paste a token with read access to the repos you accepted
     code("""
 if cfg['runner'] == 'hf':
     base = f"--base {cfg['base_model']}" if cfg.get('lora') else ''
+    sub  = f"--subfolder {cfg['subfolder']}" if cfg.get('subfolder') else ''
     chat = '' if cfg.get('chat_template', True) else '--no-chat-template'
     q4   = '--load-4bit' if cfg.get('load_4bit') else ''
     tmpl = cfg.get('template', 'general_one_shot')
     !python -m t2cbench.runners.run_hf \\
-        --model {cfg['weights'].split(' :: ')[0]} {base} \\
-        --name {MODEL} --template {tmpl} {chat} {q4} \\
+        --model {cfg['weights']} {base} {sub} \\
+        --name {MODEL} --template {tmpl} {chat} {q4} {LIM} \\
         --split {SPLIT_FILE} --out {OUT} --mode {MODE} --batch-size 8
 
 elif cfg['runner'] == 'cadrille':
@@ -205,18 +217,17 @@ elif cfg['runner'] == 'cadrille':
     t = 0.7 if MODE == 'best_of_k' else 0.0
     !python -m t2cbench.runners.run_cadrille \\
         --cadrille-repo /content/cadrille --checkpoint {cfg['weights']} \\
-        --name {MODEL} --split {SPLIT_FILE} --out {OUT} \\
+        --name {MODEL} --split {SPLIT_FILE} --out {OUT} {LIM} \\
         --n-samples {n} --temperature {t} --batch-size 16
 
 elif cfg['runner'] == 'text2cad':
     !git clone -q --depth 1 https://github.com/SadilKhan/Text2CAD /content/Text2CAD || true
     from huggingface_hub import hf_hub_download
-    ckpt = hf_hub_download('SadilKhan/Text2CAD', 'text2cad_v1.0/Text2CAD_1.0.pth',
-                           repo_type='dataset')
+    ckpt = hf_hub_download(cfg['weights'], cfg['checkpoint_file'], repo_type='dataset')
     n = 5 if MODE == 'best_of_k' else 1
     !python -m t2cbench.runners.run_text2cad \\
         --text2cad-repo /content/Text2CAD --checkpoint {ckpt} \\
-        --name {MODEL} --split {SPLIT_FILE} --out {OUT} --n-samples {n}
+        --name {MODEL} --split {SPLIT_FILE} --out {OUT} --n-samples {n} {LIM}
 """),
     md("### Check the output before you close the session"),
     code("""
@@ -251,12 +262,16 @@ MODEL = 'qwen25-coder-7b'  #@param ['qwen25-coder-7b','llama3-8b-instruct','qwen
 SPLIT = 'A'                #@param ['A','B']
 SHOT  = 'general_one_shot' #@param ['general_one_shot','general_zero_shot']
 MODE  = 'pass_at_1'        #@param ['pass_at_1','best_of_k']
+LIMIT = 8                  #@param {type:'integer'}
+# LIMIT = 8 smoke-tests in ~1 min; set 0 for the full split.
 
 import yaml, os
 cfg = yaml.safe_load(open('configs/models.yaml'))[MODEL]
 tag = MODEL + ('_0shot' if SHOT.endswith('zero_shot') else '')
 SPLIT_FILE = f"{os.environ['T2C_WORK']}/data/split_{SPLIT.lower()}.jsonl"
-OUT = f"{os.environ['T2C_WORK']}/results/raw/{tag}_split{SPLIT}_{MODE}.jsonl"
+suffix = f'_smoke{LIMIT}' if LIMIT else ''
+OUT = f"{os.environ['T2C_WORK']}/results/raw/{tag}_split{SPLIT}_{MODE}{suffix}.jsonl"
+LIM = f'--limit {LIMIT}' if LIMIT else ''
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 print(yaml.dump(cfg, sort_keys=False)); print('output:', OUT)
 """),
@@ -269,7 +284,7 @@ import torch; print(torch.cuda.get_device_name(0))
     code("""
 q4 = '--load-4bit' if cfg.get('load_4bit') else ''
 !python -m t2cbench.runners.run_hf \\
-    --model {cfg['weights']} --name {tag} --template {SHOT} {q4} \\
+    --model {cfg['weights']} --name {tag} --template {SHOT} {q4} {LIM} \\
     --split {SPLIT_FILE} --out {OUT} --mode {MODE} --batch-size 8
 """),
     md("""
