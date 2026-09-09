@@ -75,6 +75,18 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
         from peft import PeftModel
         print(f"loading base {base}")
         model = AutoModelForCausalLM.from_pretrained(base, **kwargs)
+
+        # CADFusion added a [PAD] token and resized the embeddings before training,
+        # and saved the resized embed_tokens/lm_head into the adapter -- so loading
+        # it onto an unresized base dies with
+        #   size mismatch ... checkpoint 128258 vs current model 128256.
+        # Read the width the checkpoint expects and match it, rather than assuming.
+        n_vocab = _adapter_vocab_size(model_id, subfolder)
+        cur = model.get_input_embeddings().weight.shape[0]
+        if n_vocab and n_vocab != cur:
+            print(f"resizing embeddings {cur} -> {n_vocab} to match the adapter")
+            model.resize_token_embeddings(n_vocab)
+
         print(f"applying adapter {model_id}")
         # CADFusion publishes its adapters under v1_0/ and v1_1/ rather than at
         # the repo root, so the subfolder is not optional there -- without it
@@ -95,6 +107,40 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
         tok.pad_token = tok.eos_token
     model.eval()
     return model, tok
+
+
+def _adapter_vocab_size(model_id: str, subfolder: str | None) -> int | None:
+    """Vocabulary width an adapter's saved embedding expects, or None.
+
+    Peft adapters that include `embed_tokens`/`lm_head` (because the model was
+    resized for new special tokens) can only be loaded onto a base of the same
+    width. Reading it from the checkpoint header is cheap and avoids hard-coding
+    a number that would silently rot if the adapter were republished.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        from safetensors import safe_open
+    except Exception:
+        return None
+    name = "adapter_model.safetensors"
+    path = f"{subfolder}/{name}" if subfolder else name
+    try:
+        local = hf_hub_download(model_id, path)
+    except Exception:
+        try:
+            local = hf_hub_download(model_id, path.replace(".safetensors", ".bin"))
+        except Exception:
+            return None
+    if not local.endswith(".safetensors"):
+        return None
+    try:
+        with safe_open(local, framework="pt") as f:
+            for k in f.keys():
+                if k.endswith(("embed_tokens.weight", "lm_head.weight")):
+                    return int(f.get_slice(k).get_shape()[0])
+    except Exception:
+        return None
+    return None
 
 
 def format_prompt(tok, template: dict, text: str, use_chat: bool) -> str:

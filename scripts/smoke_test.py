@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 import re
+import glob
 import subprocess
 import sys
 import textwrap
@@ -134,10 +135,49 @@ def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int,
     return None
 
 
+def make_smoke_split(work: str, split: str, n: int) -> str:
+    """Write a sub-split of n rows covering n DISTINCT shapes.
+
+    `--limit n` takes the first n rows, and the split files are ordered
+    uid-then-level, so `--limit 3` on split A means one shape at three prompt
+    levels. That tests the plumbing but says nothing about behaviour across
+    shapes, and it makes every model's score hostage to a single object. Pick
+    distinct uids instead, cycling the level so the level axis is still sampled.
+    """
+    src = split_path(work, split)
+    rows = read_jsonl(src)
+    levels = ["L0", "L1", "L2", "L3"]
+    by_uid: dict[str, list] = {}
+    for r in rows:
+        by_uid.setdefault(r["uid"], []).append(r)
+
+    picked = []
+    for i, uid in enumerate(sorted(by_uid)):
+        if len(picked) >= n:
+            break
+        want = levels[i % len(levels)]
+        cand = [r for r in by_uid[uid] if r.get("level") == want] or by_uid[uid]
+        picked.append(cand[0])
+
+    dst_dir = os.path.join(work, "smoke", "splits")
+    os.makedirs(dst_dir, exist_ok=True)
+    dst = os.path.join(dst_dir, f"split_{split.lower()}_smoke{n}.jsonl")
+    with open(dst, "w") as f:
+        for r in picked:
+            f.write(json.dumps(r) + "\n")
+    print(f"[split {split}] smoke subset: {len(picked)} distinct shapes "
+          f"({', '.join(sorted({r['uid'] for r in picked}))})")
+    return dst
+
+
 def phase_generate(work: str, models: list[str], n: int, repos: dict,
                    timeout: int, force: bool, dry_run: bool = False) -> None:
     reg = registry()
     os.makedirs(os.path.join(work, "smoke", "raw"), exist_ok=True)
+    subsets = {}
+    for split in SPLITS:
+        if os.path.exists(split_path(work, split)):
+            subsets[split] = make_smoke_split(work, split, n)
 
     for model in models:
         cfg = reg.get(model)
@@ -146,7 +186,7 @@ def phase_generate(work: str, models: list[str], n: int, repos: dict,
             continue
         for split in SPLITS:
             out = raw_path(work, model, split)
-            sf = split_path(work, split)
+            sf = subsets.get(split, split_path(work, split))
             if not os.path.exists(sf):
                 _note(work, model, split, "SKIP", f"split file missing: {sf}")
                 continue
@@ -427,6 +467,19 @@ def phase_export(work: str, models: list[str], max_chars: int) -> None:
     notes = _load_notes(work)
     payload = {"format": "t2c-smoke-export/1", "generations": [], "failures": []}
 
+    # The recorded prompt is the *formatted* one, which for CADmium is mostly a
+    # 2.3 kB JSON schema. Carry the split's plain description too, so a reader
+    # (or a figure) can see the task without unpicking chat scaffolding.
+    task = {}
+    for split in SPLITS:
+        d = os.path.join(work, "smoke", "splits")
+        files = sorted(glob.glob(os.path.join(d, f"split_{split.lower()}_smoke*.jsonl"))) \
+            if os.path.isdir(d) else []
+        files = files or ([split_path(work, split)] if os.path.exists(split_path(work, split)) else [])
+        for fp in files:
+            for r in read_jsonl(fp):
+                task.setdefault(r["sample_id"], r.get("prompt", ""))
+
     for model in models:
         cfg = reg.get(model)
         if cfg is None:
@@ -455,6 +508,7 @@ def phase_export(work: str, models: list[str], max_chars: int) -> None:
                     "prompt_head": sent[:300],
                     "prompt_tail": sent[-200:] if len(sent) > 500 else "",
                     "prompt_len": len(sent),
+                    "prompt_text": task.get(r["sample_id"], ""),
                     "output": out[:max_chars],
                     "output_len": len(out),
                     "truncated": len(out) > max_chars,

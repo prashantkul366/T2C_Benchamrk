@@ -35,7 +35,7 @@ MM="$MM_DIR/bin/micromamba"
 # is used for geometry. torch is CPU-only here -- scoring never touches a GPU.
 "$PREFIX/bin/python" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
 "$PREFIX/bin/python" -m pip install -q \
-  matplotlib loguru rich seaborn plotly scikit-learn joblib plyfile open3d \
+  matplotlib loguru rich seaborn plotly scikit-learn joblib plyfile open3d manifold3d \
   huggingface_hub pyarrow tabulate
 # embreex makes the exact point-in-solid test ~100x faster (0.5s vs 90s a sample)
 "$PREFIX/bin/python" -m pip install -q --no-deps embreex
