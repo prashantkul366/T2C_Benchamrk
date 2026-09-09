@@ -98,9 +98,13 @@ class Adapter:
 | `SkexGenAdapter` | CADFusion | `CADparser(bit=6)` → `write_obj_sample` → `OBJParser` → `OBJReconverter` → boolean ops (their pipeline verbatim) |
 | `CadQueryAdapter` | cadrille, Text-to-CadQuery, general LLMs | fenced-code extraction → sandboxed `exec` → `r.val()` or last `Workplane`/`Assembly` |
 
-All adapters run in a **subprocess with a hard timeout** (default 20 s) and a memory cap, because
-OCC and CadQuery both leak and both can hang on degenerate input. A timeout is a recorded failure,
-not a crash of the harness.
+All adapters run in a **subprocess with a hard timeout** (default 60 s), because OCC and CadQuery
+both leak and both can hang on degenerate input. A timeout is a recorded failure, not a crash of the
+harness -- but it is scored as a *model* failure, so the budget is deliberately generous: roughly
+2-3 s of every call is process fork plus the kernel import before any geometry runs, and that grows
+under worker contention. At 20 s, 12 of 18 known-good samples "failed" on a loaded machine.
+`evaluate` warns when more than 2% of samples time out, because at that point the numbers are partly
+measuring the machine.
 
 ### 3.1 Validity codes (the IR decomposition)
 
