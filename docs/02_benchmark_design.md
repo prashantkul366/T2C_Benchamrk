@@ -23,7 +23,13 @@ T2C-Bench fixes all of that by re-running every system under one protocol.
 3. **Identical sampling budget.** Same N, same temperature policy, same max tokens, for everyone.
 4. **Contamination is reported, not hidden.** Every row carries a clean/contaminated flag.
 5. **Prompt-level fairness.** No system gets its native prompt style as the headline while others
-   get an out-of-distribution one. Results are always broken out by level.
+   get an out-of-distribution one. Results are always broken out by level. The native scaffold is
+   a property of the **checkpoint**, not the paper: it is transcribed from that checkpoint's own
+   inference script and cross-checked against its `adapter_config.json`. Text-to-CadQuery is why
+   this is a rule — its Qwen and GPT-2 releases take `### Instruction:`, but its Mistral release is
+   a LoRA on Mistral-7B-**Instruct**-v0.3 prompted with `[INST]` markers. Given the wrong one it
+   does not degrade gracefully: it echoes the instruction back and emits no code at all, which
+   reads in the table as "cannot do CAD".
 6. **Nothing is normalised away that matters.** Absolute scale is reported alongside
    scale-invariant metrics, because a part that is right up to a scale factor is still a wrong part.
 
@@ -129,6 +135,24 @@ models. So a mesh is repaired and scored `OK` only when **both**: (a) it has at 
 `max(8, 0.1% of edges)` boundary edges, and (b) closing them adds less than 0.5% surface area.
 A cube missing one face passes (a) but fails (b), so it stays `NON_MANIFOLD` — the area test is
 what stops the repair from inventing geometry.
+
+**Neither are closed multi-body assemblies.** Every system here can emit several bodies. When two
+of them touch, merging coincident STL vertices leaves a handful of edges shared by four faces
+instead of two, and `is_watertight` returns False even though the shape has no holes and a
+well-defined volume. That is the same bias as the pinhole case arriving through a different door —
+it charges an invalidity to every model that emits assemblies while single-body models go free. So
+a mesh with **zero boundary edges whose every connected component is watertight** is `OK`. Two
+solids sharing a whole coincident face do *not* pass (the shared face is duplicated, so the merged
+component is not closed) and stay `NON_MANIFOLD`: the rule waves through bodies that touch, not
+bodies that overlap. On the third smoke run this alone moved CADmium from 1/3 to 3/3 valid on
+split A.
+
+**Null parts are a formatting slip, not a geometry error.** CADmium's own system message instructs
+the model to keep part numbering sequential *"even if some are null"*, and `CadSeqProc`'s loader
+then dereferences the null and raises. The adapter drops null and empty parts before building and
+records that it did; if nothing survives, the sample is `PARSE_FAIL`. Dropping a part that carries
+no geometry cannot invent geometry, and failing the sample would penalise CADmium for obeying its
+own prompt while the CadQuery adapters already ignore the prose around their code block.
 
 **IR = 1 − P(OK)**, and the breakdown is reported as a stacked bar (grouped into 4 for legibility; the full 8 stay in the CSV). This is one of the more
 informative figures in the whole benchmark — CadQuery-emitting models fail at `EXEC_FAIL`,

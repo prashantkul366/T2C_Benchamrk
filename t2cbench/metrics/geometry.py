@@ -143,6 +143,28 @@ def _grid_centres(res: int) -> np.ndarray:
     ), axis=-1).reshape(-1, 3)
 
 
+def is_closed(mesh: trimesh.Trimesh) -> bool:
+    """Does this mesh bound a volume -- i.e. is "inside" well defined?
+
+    `is_watertight` is stricter than that: it also rejects a *closed multi-body
+    assembly*, because merging coincident STL vertices where two bodies touch
+    leaves a few edges shared by four faces. Those meshes have no holes and a
+    well-defined interior, and every system in this benchmark can emit them, so
+    treating them as open would push a whole class of correct output onto the
+    dilating occupancy back-end for no reason. Overlapping bodies, whose shared
+    face is duplicated, still fail here.
+    """
+    if mesh.is_watertight:
+        return True
+    try:
+        if len(trimesh.grouping.group_rows(mesh.edges_sorted, require_count=1)):
+            return False
+        parts = mesh.split(only_watertight=False)
+        return bool(parts) and all(p.is_watertight for p in parts)
+    except Exception:
+        return False
+
+
 def voxel_iou(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh,
               res: int = VOXEL_RES, return_method: bool = False):
     """Voxel IoU on a shared res^3 grid over [0,1]^3.
@@ -153,20 +175,21 @@ def voxel_iou(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh,
 
     Two occupancy back-ends, and BOTH meshes always use the same one:
 
-      "contains"  exact point-in-solid test. Requires watertight geometry.
+      "contains"  exact point-in-solid test. Requires closed geometry (see
+                  `is_closed`: watertight, or a closed multi-body assembly).
       "voxelize"  surface voxelisation + flood fill. Works on open meshes, but
                   dilates the solid by roughly half a voxel.
 
     Mixing them would compare a dilated occupancy against an exact one and
     systematically flatter whichever side got dilated, so the choice is made
-    once for the pair: exact only when *both* meshes are watertight.
+    once for the pair: exact only when *both* meshes are closed.
 
     Install `embreex`. Without it trimesh falls back to a pure-Python ray engine
     and `contains` goes from ~0.5 s to ~90 s per sample, which makes a full
     benchmark run take weeks instead of hours.
     """
     centres = _grid_centres(res)
-    method = "contains" if (mesh_pred.is_watertight and mesh_gt.is_watertight) else "voxelize"
+    method = "contains" if (is_closed(mesh_pred) and is_closed(mesh_gt)) else "voxelize"
 
     occ_pred = _occupancy(mesh_pred, centres, res, method)
     occ_gt = _occupancy(mesh_gt, centres, res, method)
@@ -240,6 +263,12 @@ class GeomMetrics:
     iou_boolean: float | None
     hd95: float
     hd100: float
+    # False when the *ground truth* is an open shell rather than a closed solid.
+    # 3.2% of the DeepCAD test meshes are (measured over 220 of them). "Inside"
+    # is then undefined for the reference itself, so IoU on those samples is not
+    # comparable with the rest and aggregation reports it apart. CD, F1 and
+    # Hausdorff are surface metrics and stay valid either way.
+    gt_closed: bool = True
     # absolute-scale fidelity, None when either mesh has no meaningful units
     bbox_rel_err: float | None = None
     volume_rel_err: float | None = None
@@ -298,6 +327,7 @@ def compare_meshes(mesh_pred: trimesh.Trimesh,
         iou_boolean=boolean_iou(p, g) if compute_boolean_iou else None,
         hd95=hausdorff(pts_p, pts_g, 95.0),
         hd100=hausdorff(pts_p, pts_g, 100.0),
+        gt_closed=is_closed(g),
     )
 
     if absolute_scale:

@@ -158,6 +158,17 @@ def main() -> None:
             rec["validity"] = "GEN-ONLY"
             buckets[key].append(rec); per_sample.append(rec); continue
 
+        # The export clips very long outputs so the blob stays pasteable. A
+        # clipped program is not the model's program -- executing it reports a
+        # syntax error the model never made -- so it is excluded from the counts
+        # rather than scored. If this fires often, raise --max-output-chars on
+        # the generating side: it is a transport limit, not a result.
+        if g.get("truncated"):
+            rec["validity"] = "TRUNCATED"
+            rec["diagnostic"] = (f"clipped to {len(g.get('output') or '')} of "
+                                 f"{g.get('output_len', '?')} chars in transit; not scored")
+            buckets[key].append(rec); per_sample.append(rec); continue
+
         gt_path = gt.path_for(g["sample_id"], g["split"])
         if not gt_path:
             rec["validity"] = "NO_GT"
@@ -176,7 +187,8 @@ def main() -> None:
                                    compute_boolean_iou=False,
                                    absolute_scale=(g["split"] == "B"))
                 rec.update(cd=m.cd, f1=m.f1_002, iou=m.iou_voxel, hd95=m.hd95,
-                           iou_method=m.iou_voxel_method, bbox_err=m.bbox_rel_err)
+                           iou_method=m.iou_voxel_method, bbox_err=m.bbox_rel_err,
+                           gt_closed=m.gt_closed)
                 t = compare_topology(load_mesh(res.mesh_path), load_mesh(gt_path))
                 rec["euler_match"] = t["euler_match"]
             except Exception as e:
@@ -214,28 +226,42 @@ def _report(buckets, fails, gens, excerpt):
         usable = sum(1 for r in rows if r.get("validity") in ("OK", "NON_MANIFOLD"))
         genonly = sum(1 for r in rows if r.get("validity") == "GEN-ONLY")
         nogt = sum(1 for r in rows if r.get("validity") == "NO_GT")
+        clipped = sum(1 for r in rows if r.get("validity") == "TRUNCATED")
+        # Clipped outputs never reached the adapter, so they belong in neither
+        # numerator nor denominator of the validity rate.
+        n_try = max(n - clipped, 1)
         scored = [r for r in rows if r.get("cd") is not None]
 
         cd = f"{np.median([r['cd'] for r in scored]):9.2f}" if scored else "        -"
         f1 = f"{np.mean([r['f1'] for r in scored]):6.3f}" if scored else "     -"
-        iou = f"{np.mean([r['iou'] for r in scored]):6.3f}" if scored else "     -"
+        # IoU only over samples whose ground truth actually bounds a volume;
+        # against an open reference "inside" is undefined for the GT itself.
+        iou_rows = [r for r in scored if r.get("gt_closed", True)]
+        iou = f"{np.mean([r['iou'] for r in iou_rows]):6.3f}" if iou_rows else "     -"
+        open_gt = len(scored) - len(iou_rows)
 
         if genonly == n:
             verdict = "GEN-ONLY (adapter not importable here)"
         elif nogt == n:
             verdict = "NO GROUND TRUTH (could not resolve meshes)"
+        elif clipped == n:
+            verdict = "UNSCORED - every output was clipped in transit"
         elif fmt_hits == 0:
             verdict = "FAIL - output is not " + name
         elif usable == 0:
             verdict = "FAIL - no scoreable geometry"
         elif not scored:
             verdict = "FAIL - geometry built but unscoreable"
-        elif ok < n * 0.5:
-            verdict = f"WARN - only {ok}/{n} fully valid"
+        elif ok < n_try * 0.5:
+            verdict = f"WARN - only {ok}/{n_try} fully valid"
         else:
             verdict = "PASS"
+        if clipped and clipped != n:
+            verdict += f" ({clipped} clipped, not scored)"
+        if open_gt:
+            verdict += f" [{open_gt} open GT, no IoU]"
         print(f"{model:17s} {split:3s} {adapter:13s} {n:3d} {fmt_hits:2d}/{n:<2d} "
-              f"{ok:2d}/{n:<2d} {cd} {f1} {iou}  {verdict}")
+              f"{ok:2d}/{n_try:<2d} {cd} {f1} {iou}  {verdict}")
 
     for f in fails:
         print(f"{f['model']:17s} {f['split']:3s} {'-':13s} {'-':>3s} {'-':>5s} {'-':>5s} "
@@ -243,8 +269,11 @@ def _report(buckets, fails, gens, excerpt):
     print("-" * 104)
     print("""
   fmt   = generations matching the representation the adapter expects
-  OK    = adapter built a fully valid solid (NON_MANIFOLD counts as usable, not OK)
+  OK    = adapter built a fully valid solid, out of the ones that arrived intact
+          (NON_MANIFOLD counts as usable, not OK; clipped outputs are excluded)
   CDmed = median Chamfer x1000 after canonicalisation to the unit cube; lower is better
+  IoU   = mean voxel IoU over the samples whose ground truth bounds a volume; 3.2% of
+          the DeepCAD test meshes are open shells, and "inside" is undefined for those
   Split A is DeepCAD-normalised (no absolute scale); split B is CADPrompt (real dimensions)
 
   The verdict judges the PIPELINE, not the model: PASS means this system loaded, got a

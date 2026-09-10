@@ -547,8 +547,10 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--gen-timeout", type=int, default=3600)
     ap.add_argument("--excerpt", type=int, default=600)
-    ap.add_argument("--max-output-chars", type=int, default=4000,
-                    help="export: cap per-generation output so the blob stays pasteable")
+    ap.add_argument("--max-output-chars", type=int, default=12000,
+                    help="export: cap per-generation output so the blob stays pasteable. "
+                         "4000 clipped real CadQuery programs mid-statement, which then "
+                         "failed scoring with a syntax error the model never made")
     ap.add_argument("--force", action="store_true", help="redo work already on disk")
     ap.add_argument("--dry-run", action="store_true",
                     help="generate phase: print the commands instead of running them")
