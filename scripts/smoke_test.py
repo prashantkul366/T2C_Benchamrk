@@ -91,18 +91,27 @@ def read_jsonl(path: str) -> list:
 # Phase 1: generate
 # --------------------------------------------------------------------------- #
 
-def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int,
-                  repos: dict) -> list[str] | None:
+def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int | None,
+                  repos: dict, batch_size: int = 4) -> list[str] | None:
+    """Generation command for one (model, split).
+
+    `n` caps the prompt count for a smoke run; pass None for the full split.
+    The full benchmark builds its commands here too rather than keeping a second
+    hand-written roster -- the one in run_all.sh had drifted to five missing
+    models, a missing CADFusion subfolder and a stale Mistral base before anyone
+    noticed, because nothing forced it to agree with configs/models.yaml.
+    """
     py = sys.executable
     runner = cfg["runner"]
+    limit = ["--limit", str(n)] if n is not None else []
 
     if runner == "hf":
         cmd = [py, "-m", "t2cbench.runners.run_hf",
                "--model", cfg["weights"], "--name", name,
                "--template", cfg.get("template", "general_one_shot"),
                "--split", split_file, "--out", out,
-               "--mode", "pass_at_1", "--batch-size", "4", "--limit", str(n),
-               "--save-prompt"]
+               "--mode", "pass_at_1", "--batch-size", str(batch_size),
+               "--save-prompt"] + limit
         if cfg.get("lora"):
             cmd += ["--base", cfg["base_model"]]
         if cfg.get("subfolder"):
@@ -120,8 +129,8 @@ def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int,
                 "--cadrille-repo", repos["cadrille"],
                 "--checkpoint", cfg["weights"], "--name", name,
                 "--split", split_file, "--out", out,
-                "--batch-size", "4", "--n-samples", "1",
-                "--temperature", "0", "--limit", str(n), "--save-prompt"]
+                "--batch-size", str(batch_size), "--n-samples", "1",
+                "--temperature", "0", "--save-prompt"] + limit
 
     if runner == "text2cad":
         if not repos.get("text2cad") or not repos.get("text2cad_ckpt"):
@@ -130,8 +139,8 @@ def build_gen_cmd(name: str, cfg: dict, split_file: str, out: str, n: int,
                 "--text2cad-repo", repos["text2cad"],
                 "--checkpoint", repos["text2cad_ckpt"], "--name", name,
                 "--split", split_file, "--out", out,
-                "--batch-size", "4", "--n-samples", "1", "--limit", str(n),
-                "--save-prompt", "--stub-occ"]
+                "--batch-size", str(batch_size), "--n-samples", "1",
+                "--save-prompt", "--stub-occ"] + limit
     return None
 
 

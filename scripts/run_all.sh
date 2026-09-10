@@ -13,31 +13,16 @@ SPLIT_B="$DATA/split_b.jsonl"
 
 mkdir -p "$WORK"/{raw,scored,meshes,tables,figures}
 
-gen_hf () {  # name  weights  template  [extra flags...]
-  local name="$1" weights="$2" template="$3"; shift 3
-  for split in A B; do
-    local sf="$SPLIT_A"; [ "$split" = B ] && sf="$SPLIT_B"
-    python -m t2cbench.runners.run_hf \
-      --model "$weights" --name "$name" --template "$template" "$@" \
-      --split "$sf" --out "$WORK/raw/${name}_split${split}_${MODE}.jsonl" --mode "$MODE"
-  done
-}
-
-echo "=== specialised systems ==="
-gen_hf cadmium-7b      chandar-lab/CADmium-7B  native.cadmium \
-       --base Qwen/Qwen2.5-Coder-7B-Instruct
-gen_hf cadfusion-v1.1  microsoft/CADFusion     native.cadfusion \
-       --base meta-llama/Meta-Llama-3-8B --no-chat-template
-gen_hf t2cq-qwen-3b    ricemonster/qwen2.5-3B-SFT native.text2cadquery --no-chat-template
-
-echo "=== general LLMs (base models of the three above come first) ==="
-for m in "qwen25-coder-7b:Qwen/Qwen2.5-Coder-7B-Instruct" \
-         "llama3-8b-instruct:meta-llama/Meta-Llama-3-8B-Instruct" \
-         "qwen2-vl-2b:Qwen/Qwen2-VL-2B-Instruct" \
-         "mistral-7b-instruct:mistralai/Mistral-7B-Instruct-v0.3" \
-         "deepseek-coder-6.7b:deepseek-ai/deepseek-coder-6.7b-instruct"; do
-  gen_hf "${m%%:*}" "${m##*:}" general_one_shot
-done
+# The roster is configs/models.yaml, and nothing else. This script used to keep
+# its own copy of it, which drifted: by the time anyone checked it was missing
+# five of the thirteen models (text2cad, both cadrille checkpoints,
+# t2cq-mistral-7b, qwen25-coder-32b), had lost CADFusion's `--subfolder v1_1`,
+# and named a Mistral base the checkpoint's own adapter_config.json contradicts.
+# Each of those costs A100 hours and yields a row that looks like a model result.
+python scripts/plan_full_run.py --work "$WORK" --data "$DATA" --run \
+  ${CADRILLE_REPO:+--cadrille-repo "$CADRILLE_REPO"} \
+  ${TEXT2CAD_REPO:+--text2cad-repo "$TEXT2CAD_REPO"} \
+  ${TEXT2CAD_CKPT:+--text2cad-ckpt "$TEXT2CAD_CKPT"}
 
 echo "=== scoring (CPU) ==="
 python scripts/score_all.py --work "$WORK" --data "$DATA"
