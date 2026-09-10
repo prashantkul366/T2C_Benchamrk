@@ -47,18 +47,42 @@ FORMAT_SIGNATURES = {
 }
 
 
-def available_adapters() -> dict:
-    avail = {}
+# Adapters that additionally need a source checkout, named by an env var. A
+# missing one is a property of THIS machine, not of the model -- letting the
+# adapter run and raise would file it as EXEC_FAIL, i.e. "the model emitted
+# something that would not build", which is exactly the wrong conclusion. It is
+# checked up front instead and reported as unavailable.
+ADAPTER_REPOS = {
+    "minimal_json": ("T2CBENCH_CADSEQ_PATH", "CadSeqProc"),
+    "cadvec":       ("T2CBENCH_CADSEQ_PATH", "CadSeqProc"),
+    "skexgen":      ("T2CBENCH_CADFUSION_PATH", "src/rendering_utils"),
+}
+
+
+def available_adapters() -> tuple[dict, dict]:
+    """(adapter -> usable here, adapter -> why not)."""
+    avail, why = {}, {}
     for mod, names in (("cadquery", ["cadquery"]),
                        ("OCC", ["minimal_json", "cadvec", "skexgen"])):
         try:
             __import__(mod)
             ok = True
-        except Exception:
+        except Exception as e:
             ok = False
         for a in names:
             avail[a] = ok
-    return avail
+            if not ok:
+                why[a] = f"{mod} not importable"
+
+    for a, (var, marker) in ADAPTER_REPOS.items():
+        if not avail.get(a):
+            continue
+        root = os.environ.get(var)
+        if not root or not os.path.isdir(os.path.join(os.path.abspath(root), marker)):
+            avail[a] = False
+            why[a] = (f"{var} unset" if not root
+                      else f"{var}={root} has no {marker}/ subdirectory")
+    return avail, why
 
 
 def load_export(path: str | None) -> dict:
@@ -135,9 +159,14 @@ def main() -> None:
     fails = payload.get("failures", [])
     print(f"loaded {len(gens)} generations, {len(fails)} model/split failures\n")
 
-    avail = available_adapters()
-    print("adapters importable here:",
-          {k: ("yes" if v else "NO") for k, v in avail.items()}, "\n")
+    avail, why = available_adapters()
+    print("adapters usable here:",
+          {k: ("yes" if v else "NO") for k, v in avail.items()})
+    for a, reason in sorted(why.items()):
+        print(f"  {a}: {reason}")
+    if why:
+        print("  -> these are scored GEN-ONLY, not counted against any model")
+    print()
 
     cp = find_cadprompt_root(args.cadprompt_dir)
     if args.cadprompt_dir and not cp:

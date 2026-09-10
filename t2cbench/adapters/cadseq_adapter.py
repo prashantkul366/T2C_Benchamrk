@@ -207,11 +207,24 @@ class SkexGenAdapter(Adapter):
                 "set T2CBENCH_CADFUSION_PATH to a checkout of https://github.com/microsoft/CADFusion"
             )
         root = os.path.abspath(root)
-        for p in (os.path.join(root, "src"), root):
+        # `src/rendering_utils` is the import root, not `src`: CADFusion's own
+        # modules import each other absolutely from there -- geometry/obj_parser.py
+        # says `from geometry.arc import Arc` -- so importing them as
+        # `rendering_utils.geometry.obj_parser` gets the submodule but then dies
+        # on its internal imports. Their scripts run with that directory on the
+        # path (see src/rendering_utils/parser_visual.py), and so do we.
+        pkg = os.path.join(root, "src", "rendering_utils")
+        if not os.path.isdir(pkg):
+            raise RuntimeError(
+                f"T2CBENCH_CADFUSION_PATH={root} has no src/rendering_utils; "
+                f"point it at a checkout of https://github.com/microsoft/CADFusion")
+        for p in (pkg, os.path.join(root, "src"), root):
             if p not in sys.path:
                 sys.path.insert(0, p)
 
-        from rendering_utils.parser import CADparser, write_obj_sample
+        # Bare `parser` is CADFusion's module, not the standard library's --
+        # stdlib `parser` was removed in Python 3.10 and the scoring env is 3.11.
+        from parser import CADparser, write_obj_sample
         from geometry.obj_parser import OBJParser
         from utils.obj_reconverter import OBJReconverter
         from OCC.Core.BRepCheck import BRepCheck_Analyzer

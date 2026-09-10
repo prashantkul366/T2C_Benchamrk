@@ -50,4 +50,10 @@ print(f"  numpy {numpy.__version__} | trimesh {trimesh.__version__} | "
 PY
 echo
 echo "ready: $PREFIX/bin/python"
-echo "remember to export T2CBENCH_CADSEQ_PATH=/path/to/Text2CAD (sequence adapters)"
+echo
+echo "Two source checkouts are needed before scoring; without them the affected"
+echo "adapters are reported GEN-ONLY rather than counted against any model:"
+echo "  export T2CBENCH_CADSEQ_PATH=/path/to/Text2CAD    # cadvec + minimal_json"
+echo "        git clone https://github.com/SadilKhan/Text2CAD"
+echo "  export T2CBENCH_CADFUSION_PATH=/path/to/CADFusion # skexgen"
+echo "        git clone https://github.com/microsoft/CADFusion"
