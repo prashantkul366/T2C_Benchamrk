@@ -12,6 +12,11 @@ def main():
     ap.add_argument("--data", default="data")
     ap.add_argument("--models", default="configs/models.yaml")
     ap.add_argument("--workers", type=int, default=8)
+    # 60 s, matching t2cbench.evaluate's own default. This used to hard-code 20,
+    # which silently overrode it: on a box running 8 scoring workers, 12 of 18
+    # known-good samples "failed" purely on contention, and a TIMEOUT is counted
+    # against the model.
+    ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--force", action="store_true", help="rescore files already scored")
     args = ap.parse_args()
 
@@ -37,7 +42,8 @@ def main():
             "--split", os.path.join(args.data, f"split_{split_letter}.jsonl"),
             "--adapter", adapter, "--model-name", name,
             "--keep-meshes", os.path.join(args.work, "meshes", name),
-            "--out", scored, "--workers", str(args.workers), "--timeout", "20",
+            "--out", scored, "--workers", str(args.workers),
+            "--timeout", str(args.timeout),
         ], check=True)
 
 
