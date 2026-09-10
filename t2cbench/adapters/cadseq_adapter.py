@@ -120,8 +120,22 @@ class MinimalJsonAdapter(Adapter):
                         "diagnostic": f"'parts' has no non-empty part ({len(parts)} null)"}
             obj = dict(obj, parts=kept)
 
-        seq = CADSequence.from_minimal_json(obj)
-        seq.create_cad_model()
+        try:
+            seq = CADSequence.from_minimal_json(obj)
+            seq.create_cad_model()
+        except KeyError as e:
+            # CadSeqProc's LoopSequence.ensure_connectivity assumes every curve
+            # in a loop has an end point, which a circle does not -- so a loop
+            # holding two closed curves dies with a bare KeyError('end_point')
+            # several frames deep. That is a real invalid output (an annulus is
+            # two loops in one face, not two circles in one loop, per CADmium's
+            # own schema) and stays a failure, but naming it keeps the invalidity
+            # breakdown readable instead of filing it under a stray KeyError.
+            if str(e).strip("'\"") in ("end_point", "start_point"):
+                raise ValueError(
+                    "loop contains more than one closed curve (e.g. two circles); "
+                    "concentric circles must be separate loops in the same face") from e
+            raise
         res = finalize_solid(seq.cad_model, out_stl)
         if dropped:
             note = f"dropped {dropped} null part(s)"
