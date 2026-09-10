@@ -143,6 +143,49 @@ def _grid_centres(res: int) -> np.ndarray:
     ), axis=-1).reshape(-1, 3)
 
 
+# A canonicalised mesh spans [0,1] in its largest dimension, so on a res^3 grid
+# its smallest dimension covers `min_extent * res` voxels. Below about two, the
+# shape is thinner than the grid can represent and IoU collapses towards zero for
+# every prediction, however good. Measured on CADPrompt 00000633 (a 192:1 plate,
+# 0.33 voxels thick at 64^3): IoU is 0.000 at both 64 and 128 and 0.006 at 256,
+# while F1@0.02 still separates a good fit from a bad one. Raising the resolution
+# costs 64x and does not fix it, so these samples are flagged out of the IoU mean
+# instead. Roughly a third of this corpus is flat or slab-like, so this is not a
+# rare corner.
+IOU_MIN_VOXELS = 2.0
+
+
+def gt_too_thin_for_iou(mesh_gt_canonical: trimesh.Trimesh,
+                        res: int = VOXEL_RES) -> bool:
+    """Is the reference too thin for a res^3 occupancy grid to represent?"""
+    try:
+        return bool(float(np.min(mesh_gt_canonical.extents)) * res < IOU_MIN_VOXELS)
+    except Exception:
+        return False
+
+
+def is_closed(mesh: trimesh.Trimesh) -> bool:
+    """Does this mesh bound a volume -- i.e. is "inside" well defined?
+
+    `is_watertight` is stricter than that: it also rejects a *closed multi-body
+    assembly*, because merging coincident STL vertices where two bodies touch
+    leaves a few edges shared by four faces. Those meshes have no holes and a
+    well-defined interior, and every system in this benchmark can emit them, so
+    treating them as open would push a whole class of correct output onto the
+    dilating occupancy back-end for no reason. Overlapping bodies, whose shared
+    face is duplicated, still fail here.
+    """
+    if mesh.is_watertight:
+        return True
+    try:
+        if len(trimesh.grouping.group_rows(mesh.edges_sorted, require_count=1)):
+            return False
+        parts = mesh.split(only_watertight=False)
+        return bool(parts) and all(p.is_watertight for p in parts)
+    except Exception:
+        return False
+
+
 def voxel_iou(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh,
               res: int = VOXEL_RES, return_method: bool = False):
     """Voxel IoU on a shared res^3 grid over [0,1]^3.
@@ -153,20 +196,21 @@ def voxel_iou(mesh_pred: trimesh.Trimesh, mesh_gt: trimesh.Trimesh,
 
     Two occupancy back-ends, and BOTH meshes always use the same one:
 
-      "contains"  exact point-in-solid test. Requires watertight geometry.
+      "contains"  exact point-in-solid test. Requires closed geometry (see
+                  `is_closed`: watertight, or a closed multi-body assembly).
       "voxelize"  surface voxelisation + flood fill. Works on open meshes, but
                   dilates the solid by roughly half a voxel.
 
     Mixing them would compare a dilated occupancy against an exact one and
     systematically flatter whichever side got dilated, so the choice is made
-    once for the pair: exact only when *both* meshes are watertight.
+    once for the pair: exact only when *both* meshes are closed.
 
     Install `embreex`. Without it trimesh falls back to a pure-Python ray engine
     and `contains` goes from ~0.5 s to ~90 s per sample, which makes a full
     benchmark run take weeks instead of hours.
     """
     centres = _grid_centres(res)
-    method = "contains" if (mesh_pred.is_watertight and mesh_gt.is_watertight) else "voxelize"
+    method = "contains" if (is_closed(mesh_pred) and is_closed(mesh_gt)) else "voxelize"
 
     occ_pred = _occupancy(mesh_pred, centres, res, method)
     occ_gt = _occupancy(mesh_gt, centres, res, method)
@@ -240,6 +284,16 @@ class GeomMetrics:
     iou_boolean: float | None
     hd95: float
     hd100: float
+    # False when the *ground truth* is an open shell rather than a closed solid.
+    # 3.2% of the DeepCAD test meshes are (measured over 220 of them). "Inside"
+    # is then undefined for the reference itself, so IoU on those samples is not
+    # comparable with the rest and aggregation reports it apart. CD, F1 and
+    # Hausdorff are surface metrics and stay valid either way.
+    gt_closed: bool = True
+    # True when the ground truth is thinner than IOU_MIN_VOXELS voxels in its
+    # smallest dimension, so it barely exists on the occupancy grid. See
+    # `gt_too_thin_for_iou`.
+    gt_thin: bool = False
     # absolute-scale fidelity, None when either mesh has no meaningful units
     bbox_rel_err: float | None = None
     volume_rel_err: float | None = None
@@ -298,6 +352,8 @@ def compare_meshes(mesh_pred: trimesh.Trimesh,
         iou_boolean=boolean_iou(p, g) if compute_boolean_iou else None,
         hd95=hausdorff(pts_p, pts_g, 95.0),
         hd100=hausdorff(pts_p, pts_g, 100.0),
+        gt_closed=is_closed(g),
+        gt_thin=gt_too_thin_for_iou(g),
     )
 
     if absolute_scale:

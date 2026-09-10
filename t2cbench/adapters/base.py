@@ -216,6 +216,31 @@ def _check_mesh(out_stl: str, n_solids: int) -> dict:
     except Exception:
         n_boundary = None
 
+    # A closed multi-body assembly is not an open shell. Every one of these
+    # systems can emit several bodies, and when two of them touch, merging
+    # coincident STL vertices leaves a handful of edges shared by four faces
+    # instead of two -- enough for `is_watertight` to say False even though the
+    # shape has no holes at all and a well-defined volume. Counting that as
+    # invalid would charge an invalidity to every model that emits assemblies
+    # while single-body models go free: the same bias the pinhole rule exists to
+    # prevent, arriving through a different door. So: no boundary edges and every
+    # connected component closed => the solid is fine.
+    if n_boundary == 0:
+        try:
+            parts = m.split(only_watertight=False)
+        except Exception:
+            parts = []
+        if parts and all(p.is_watertight for p in parts):
+            n_shared = len(trimesh.grouping.group_rows(m.edges_sorted, require_count=2))
+            n_unique = len(trimesh.grouping.unique_rows(m.edges_sorted)[0])
+            return {"validity": Validity.OK.value, "n_solids": n_solids,
+                    "diagnostic": f"closed {len(parts)}-body assembly; touching bodies leave "
+                                  f"{n_unique - n_shared} merged edge(s) shared by more than "
+                                  f"two faces"}
+        return {"validity": Validity.NON_MANIFOLD.value, "n_solids": n_solids,
+                "diagnostic": "no boundary edges, but the mesh is not a union of closed "
+                              "bodies -- self-intersecting or duplicated faces"}
+
     budget = max(TESSELLATION_PINHOLE_EDGES, int(len(m.edges) * TESSELLATION_PINHOLE_FRAC))
     if n_boundary is not None and n_boundary <= budget:
         repaired = m.copy()
@@ -237,5 +262,7 @@ def _check_mesh(out_stl: str, n_solids: int) -> dict:
 
     # Still usable for CD/F1, so the mesh is kept -- but flagged, and volumetric
     # metrics fall back to the dilating voxel back-end for both sides.
+    where = (f"{n_boundary} boundary edges (budget {budget})"
+             if n_boundary is not None else "boundary edges could not be counted")
     return {"validity": Validity.NON_MANIFOLD.value, "n_solids": n_solids,
-            "diagnostic": f"open mesh: {n_boundary} boundary edges (budget {budget})"}
+            "diagnostic": f"open mesh: {where}"}

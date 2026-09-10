@@ -146,6 +146,13 @@ def main():
         prompts.setdefault(sid, g.get("prompt_text") or g.get("prompt_tail")
                            or g.get("prompt_head", ""))
         stem = f"{g['model']}__{sid.replace('/', '_')}"
+        # A clipped output is not the model's program; drawing the wreckage of a
+        # half-statement would misattribute a transport limit to the model.
+        if g.get("truncated"):
+            cells[(g["model"], sid)] = {"validity": "TRUNCATED", "mesh": None,
+                                        "cd": None, "iou": None}
+            print(f"  skipped {stem}: clipped in transit", flush=True)
+            continue
         out = os.path.join(tmp, stem + ".stl")
         res = get_adapter(g["adapter"], timeout_s=args.timeout).run(g["output"], out)
         rec = {"validity": res.validity.value, "mesh": None, "cd": None, "iou": None}

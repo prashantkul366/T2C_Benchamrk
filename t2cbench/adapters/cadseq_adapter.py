@@ -102,9 +102,31 @@ class MinimalJsonAdapter(Adapter):
                 return {"validity": Validity.PARSE_FAIL.value,
                         "diagnostic": f"no 'parts' key; got {list(obj)[:6]}"}
 
+        # CADmium's own system message tells the model to keep the numbering
+        # sequential "even if some are null", and the model duly emits
+        # "part_2": null -- which CadSeqProc's loader then dereferences and dies
+        # on. Dropping null parts is a formatting repair, not a geometric one:
+        # a null part carries no geometry, so removing it cannot invent any.
+        # Failing the whole sample for it would penalise CADmium for obeying its
+        # own prompt, while the CadQuery adapters already ignore the prose that
+        # surrounds their code block.
+        parts = obj["parts"]
+        dropped = 0
+        if isinstance(parts, dict):
+            kept = {k: v for k, v in parts.items() if isinstance(v, dict) and v}
+            dropped = len(parts) - len(kept)
+            if not kept:
+                return {"validity": Validity.PARSE_FAIL.value,
+                        "diagnostic": f"'parts' has no non-empty part ({len(parts)} null)"}
+            obj = dict(obj, parts=kept)
+
         seq = CADSequence.from_minimal_json(obj)
         seq.create_cad_model()
-        return finalize_solid(seq.cad_model, out_stl)
+        res = finalize_solid(seq.cad_model, out_stl)
+        if dropped:
+            note = f"dropped {dropped} null part(s)"
+            res["diagnostic"] = f"{note}; {res['diagnostic']}" if res.get("diagnostic") else note
+        return res
 
 
 def extract_json(text: str) -> dict | None:

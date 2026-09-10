@@ -94,10 +94,15 @@ t2cq-mistral-7b:
   runner: hf
   adapter: cadquery
   weights: "ricemonster/Mistral-7B-lora"
-  base_model: "mistralai/Mistral-7B-v0.3"
+  # Instruct, not base: the adapter's own adapter_config.json names
+  # mistralai/Mistral-7B-Instruct-v0.3, and so does their inference script.
+  # Merging it onto the base model silently produces a different network.
+  base_model: "mistralai/Mistral-7B-Instruct-v0.3"
   lora: true
   params: "7B (LoRA)"
-  template: native.text2cadquery
+  # Not native.text2cadquery -- this is the one Text-to-CadQuery release prompted
+  # with [INST] markers. See the comment on the template.
+  template: native.text2cadquery_mistral
   chat_template: false
 
 # =========================================================================== #

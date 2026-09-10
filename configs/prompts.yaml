@@ -58,6 +58,19 @@ native:
     ### Response:
 
 
+  # ... except the Mistral release, which is the odd one out: it is a LoRA on
+  # Mistral-7B-*Instruct*-v0.3 and is prompted with Mistral's own [INST] markers
+  # rather than the ### Instruction scaffold the Qwen and GPT-2 checkpoints use
+  # (inference/step1_generate_CadQuery/inference_mistral-7B.py:33).
+  #
+  # It does not degrade gracefully on the wrong scaffold: given the Qwen one it
+  # echoes the instruction back verbatim and emits no code at all, which reads in
+  # the results table as "this model cannot do CAD" when in fact it was never
+  # asked in its own language. The literal <s> is theirs and is kept -- the
+  # tokenizer adds its own BOS on top, so reproducing their published pipeline
+  # means reproducing that too.
+  text2cadquery_mistral: "<s>[INST] {prompt} [/INST]"
+
   # cadrille builds its own chat template in cadrille.py; the runner defers to it.
   cadrille: "{prompt}"
 
