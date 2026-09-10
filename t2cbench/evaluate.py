@@ -213,8 +213,13 @@ def _summary(rows: list) -> None:
     if cds:
         print(f"  CD median={np.median(cds):.3f}  mean={np.mean(cds):.3f}  (x1000, n={len(cds)})")
         f1 = [r["f1_002"] for r in rows if r.get("scored")]
-        iou = [r["iou_voxel"] for r in rows if r.get("scored")]
-        print(f"  F1@0.02 mean={np.mean(f1):.4f}   IoU(voxel) mean={np.mean(iou):.4f}")
+        # Same rule as the report tables: IoU only where the occupancy grid can
+        # represent the reference (closed, and thicker than a couple of voxels).
+        iou = [r["iou_voxel"] for r in rows if r.get("scored")
+               and r.get("gt_closed", True) and not r.get("gt_thin", False)]
+        iou_txt = (f"{np.mean(iou):.4f} (n={len(iou)})" if iou
+                   else "n/a (no reference the voxel grid can represent)")
+        print(f"  F1@0.02 mean={np.mean(f1):.4f}   IoU(voxel) mean={iou_txt}")
 
 
 def _read_jsonl(path: str) -> list:

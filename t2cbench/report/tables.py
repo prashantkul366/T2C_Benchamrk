@@ -64,9 +64,24 @@ def select_best_of_k(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out).reset_index(drop=True)
 
 
+# Every column `aggregate` emits, so an empty slice still has the right shape.
+AGG_COLUMNS = ["n", "IR_%", "P_ok", "P_usable", "CD_median", "CD_mean",
+               "CD_mean_trim5", "F1_002", "F1_005", "IoU_voxel", "IoU_n",
+               "HD95_median", "n_scored", "IoU_bool", "IoU_bool_coverage",
+               "Score"]
+
+
 def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
     """Core aggregation. `by` defaults to model only."""
     by = by or ["model"]
+    # An empty slice is normal, not an error: best-of-5 tables are empty in a
+    # pass@1-only run, and a contamination or complexity slice can be empty for a
+    # model that failed everything in it. An empty frame also loses its columns,
+    # so groupby(by) raises KeyError before any of this runs. Both used to take
+    # the whole report down -- after every GPU hour had already been spent.
+    if df.empty or any(c not in df.columns for c in by):
+        return pd.DataFrame(columns=by + AGG_COLUMNS)
+
     rows = []
     for keys, g in df.groupby(by, dropna=False, sort=False):
         keys = keys if isinstance(keys, tuple) else (keys,)
@@ -74,6 +89,19 @@ def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
         ok = (g["validity"] == "OK").sum()
         usable = g["validity"].isin(["OK", "NON_MANIFOLD"]).sum()
         v = g[g["scored"].fillna(False) & g["cd"].notna()]
+
+        # IoU only over ground truth an occupancy grid can represent: it must
+        # bound a volume, and be thicker than a couple of voxels. Averaging over
+        # the rest drags every model towards zero on the ~3% of open-shell
+        # references and on the thin plates that score 0 against any prediction,
+        # then ranks models partly on that artefact. Both flags come from
+        # compare_meshes; scored files predating them fall back to "usable".
+        iou_ok = pd.Series(True, index=v.index)
+        if "gt_closed" in v.columns:
+            iou_ok &= v["gt_closed"].fillna(True).astype(bool)
+        if "gt_thin" in v.columns:
+            iou_ok &= ~v["gt_thin"].fillna(False).astype(bool)
+        vi = v[iou_ok]
 
         rec = dict(zip(by, keys))
         rec.update({
@@ -86,7 +114,8 @@ def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
             "CD_mean_trim5": _trimmed_mean(v["cd"].values, 0.05) if len(v) else np.nan,
             "F1_002": float(np.mean(v["f1_002"])) if len(v) else 0.0,
             "F1_005": float(np.mean(v["f1_005"])) if len(v) else 0.0,
-            "IoU_voxel": float(np.mean(v["iou_voxel"])) if len(v) else 0.0,
+            "IoU_voxel": float(np.mean(vi["iou_voxel"])) if len(vi) else np.nan,
+            "IoU_n": len(vi),
             "HD95_median": float(np.median(v["hd95"])) if len(v) else np.nan,
             "n_scored": len(v),
         })
@@ -99,6 +128,9 @@ def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
         # is identical to P(ok-and-scored) x mean F1 over scored.
         rec["Score"] = float(v["f1_002"].sum() / n) if n else 0.0
         rows.append(rec)
+
+    if not rows:
+        return pd.DataFrame(columns=by + AGG_COLUMNS)
 
     out = pd.DataFrame(rows)
     return out.sort_values("Score", ascending=False).reset_index(drop=True)
@@ -190,8 +222,11 @@ def table_validity(df: pd.DataFrame) -> pd.DataFrame:
 
 # --------------------------------------------------------------------------- #
 
+# IoU_n rides alongside IoU_voxel because that mean is taken over a subset --
+# references the voxel grid can actually represent -- and a subset mean without
+# its n invites the reader to compare two numbers computed over different rows.
 MAIN_COLS = ["model", "level", "n", "IR_%", "CD_median", "CD_mean", "F1_002",
-             "IoU_voxel", "HD95_median", "Score"]
+             "IoU_voxel", "IoU_n", "HD95_median", "Score"]
 
 
 def to_markdown(df: pd.DataFrame, cols: list[str] | None = None, floatfmt: int = 4) -> str:
