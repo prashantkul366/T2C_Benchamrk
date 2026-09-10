@@ -194,9 +194,24 @@ mean by more than fifty good ones. Both are reported, and the mean is what revea
 fails *gracefully* or *catastrophically*.
 
 Both meshes always use the **same** voxel occupancy back-end: exact point-in-solid (`contains`)
-when both are watertight, surface-voxelisation-plus-fill otherwise. Mixing them would compare a
+when both are closed, surface-voxelisation-plus-fill otherwise. Mixing them would compare a
 dilated occupancy against an exact one and flatter whichever side got dilated. Which back-end was
-used is recorded per row as `iou_voxel_method`.
+used is recorded per row as `iou_voxel_method`. "Closed" here means `is_closed` — watertight, or a
+closed multi-body assembly (§3.1) — so an assembly is not pushed onto the dilating path for a
+merged edge.
+
+**Two kinds of ground truth cannot carry an IoU, and are excluded from that column only.** Both are
+flagged per row, and CD, F1 and Hausdorff — surface metrics — stay on the full set:
+
+- **Open-shell references.** 3.2% of the DeepCAD test meshes (7 of 220 measured) have boundary
+  edges, so "inside" is undefined for the reference itself.
+- **Sub-voxel plates.** A canonicalised mesh spans 1.0 in its longest dimension, so at 64³ a part
+  thinner than ~1/32 of its length occupies less than two voxels and scores IoU ≈ 0 against *every*
+  prediction. CADPrompt `00000633` is 192:1: IoU is 0.000 at both 64³ and 128³ and 0.006 at 256³,
+  while F1@0.02 still separates a good fit (0.66) from a bad one (0.03). Raising the resolution
+  costs 64× and does not fix it. About a third of this corpus is flat or slab-like, so this is not
+  a corner case — it is the main reason the headline ranking is `P(valid) × mean F1@0.02` and not
+  anything built on IoU.
 
 Why voxel IoU is primary over boolean IoU: `trimesh`'s boolean intersection fails on a large
 fraction of non-watertight CAD output, and cadrille's implementation swallows that in a bare

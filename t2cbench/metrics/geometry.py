@@ -143,6 +143,27 @@ def _grid_centres(res: int) -> np.ndarray:
     ), axis=-1).reshape(-1, 3)
 
 
+# A canonicalised mesh spans [0,1] in its largest dimension, so on a res^3 grid
+# its smallest dimension covers `min_extent * res` voxels. Below about two, the
+# shape is thinner than the grid can represent and IoU collapses towards zero for
+# every prediction, however good. Measured on CADPrompt 00000633 (a 192:1 plate,
+# 0.33 voxels thick at 64^3): IoU is 0.000 at both 64 and 128 and 0.006 at 256,
+# while F1@0.02 still separates a good fit from a bad one. Raising the resolution
+# costs 64x and does not fix it, so these samples are flagged out of the IoU mean
+# instead. Roughly a third of this corpus is flat or slab-like, so this is not a
+# rare corner.
+IOU_MIN_VOXELS = 2.0
+
+
+def gt_too_thin_for_iou(mesh_gt_canonical: trimesh.Trimesh,
+                        res: int = VOXEL_RES) -> bool:
+    """Is the reference too thin for a res^3 occupancy grid to represent?"""
+    try:
+        return bool(float(np.min(mesh_gt_canonical.extents)) * res < IOU_MIN_VOXELS)
+    except Exception:
+        return False
+
+
 def is_closed(mesh: trimesh.Trimesh) -> bool:
     """Does this mesh bound a volume -- i.e. is "inside" well defined?
 
@@ -269,6 +290,10 @@ class GeomMetrics:
     # comparable with the rest and aggregation reports it apart. CD, F1 and
     # Hausdorff are surface metrics and stay valid either way.
     gt_closed: bool = True
+    # True when the ground truth is thinner than IOU_MIN_VOXELS voxels in its
+    # smallest dimension, so it barely exists on the occupancy grid. See
+    # `gt_too_thin_for_iou`.
+    gt_thin: bool = False
     # absolute-scale fidelity, None when either mesh has no meaningful units
     bbox_rel_err: float | None = None
     volume_rel_err: float | None = None
@@ -328,6 +353,7 @@ def compare_meshes(mesh_pred: trimesh.Trimesh,
         hd95=hausdorff(pts_p, pts_g, 95.0),
         hd100=hausdorff(pts_p, pts_g, 100.0),
         gt_closed=is_closed(g),
+        gt_thin=gt_too_thin_for_iou(g),
     )
 
     if absolute_scale:

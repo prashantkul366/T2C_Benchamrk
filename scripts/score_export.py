@@ -188,7 +188,7 @@ def main() -> None:
                                    absolute_scale=(g["split"] == "B"))
                 rec.update(cd=m.cd, f1=m.f1_002, iou=m.iou_voxel, hd95=m.hd95,
                            iou_method=m.iou_voxel_method, bbox_err=m.bbox_rel_err,
-                           gt_closed=m.gt_closed)
+                           gt_closed=m.gt_closed, gt_thin=m.gt_thin)
                 t = compare_topology(load_mesh(res.mesh_path), load_mesh(gt_path))
                 rec["euler_match"] = t["euler_match"]
             except Exception as e:
@@ -234,11 +234,13 @@ def _report(buckets, fails, gens, excerpt):
 
         cd = f"{np.median([r['cd'] for r in scored]):9.2f}" if scored else "        -"
         f1 = f"{np.mean([r['f1'] for r in scored]):6.3f}" if scored else "     -"
-        # IoU only over samples whose ground truth actually bounds a volume;
-        # against an open reference "inside" is undefined for the GT itself.
-        iou_rows = [r for r in scored if r.get("gt_closed", True)]
+        # IoU only where the occupancy grid can represent the reference: it must
+        # bound a volume (open shells have no "inside") and be thicker than a
+        # couple of voxels (a sub-voxel plate scores 0 against every prediction).
+        iou_rows = [r for r in scored
+                    if r.get("gt_closed", True) and not r.get("gt_thin", False)]
         iou = f"{np.mean([r['iou'] for r in iou_rows]):6.3f}" if iou_rows else "     -"
-        open_gt = len(scored) - len(iou_rows)
+        skipped_iou = len(scored) - len(iou_rows)
 
         if genonly == n:
             verdict = "GEN-ONLY (adapter not importable here)"
@@ -258,8 +260,8 @@ def _report(buckets, fails, gens, excerpt):
             verdict = "PASS"
         if clipped and clipped != n:
             verdict += f" ({clipped} clipped, not scored)"
-        if open_gt:
-            verdict += f" [{open_gt} open GT, no IoU]"
+        if skipped_iou:
+            verdict += f" [{skipped_iou} GT open or sub-voxel thin, no IoU]"
         print(f"{model:17s} {split:3s} {adapter:13s} {n:3d} {fmt_hits:2d}/{n:<2d} "
               f"{ok:2d}/{n_try:<2d} {cd} {f1} {iou}  {verdict}")
 
@@ -272,8 +274,10 @@ def _report(buckets, fails, gens, excerpt):
   OK    = adapter built a fully valid solid, out of the ones that arrived intact
           (NON_MANIFOLD counts as usable, not OK; clipped outputs are excluded)
   CDmed = median Chamfer x1000 after canonicalisation to the unit cube; lower is better
-  IoU   = mean voxel IoU over the samples whose ground truth bounds a volume; 3.2% of
-          the DeepCAD test meshes are open shells, and "inside" is undefined for those
+  IoU   = mean voxel IoU over the samples the occupancy grid can represent. Excluded:
+          open-shell ground truth (3.2% of the DeepCAD test meshes -- "inside" is
+          undefined) and plates thinner than 2 voxels, which score 0 against every
+          prediction. F1 is the metric that degrades gracefully on both; rank on it
   Split A is DeepCAD-normalised (no absolute scale); split B is CADPrompt (real dimensions)
 
   The verdict judges the PIPELINE, not the model: PASS means this system loaded, got a
