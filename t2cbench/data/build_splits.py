@@ -74,8 +74,16 @@ SEED = 0
 # Downloads
 # --------------------------------------------------------------------------- #
 
-def fetch_assets(cache: str, quiet: bool = True) -> dict:
-    """Pull the ungated assets. Returns local paths.
+ALL_ASSETS = ("t2c_csv", "deepcad_meshes", "cadquery_gt")
+
+
+def fetch_assets(cache: str, quiet: bool = True, need=ALL_ASSETS) -> dict:
+    """Pull the ungated assets named in `need`. Returns local paths.
+
+    `need` exists so a stage does not pay for assets it never opens: split B
+    touches none of these directly (see `deepcad_test_uids`), and making it
+    download 1.6 GB before it could rewrite a prompt turned every transient
+    network error into a failed rebuild.
 
     `quiet` disables HuggingFace's per-file progress bars. The DeepCAD mesh
     snapshot is 8,048 separate files, and 8,048 progress bars is what makes a
@@ -94,26 +102,58 @@ def fetch_assets(cache: str, quiet: bool = True) -> dict:
     os.makedirs(cache, exist_ok=True)
     paths = {}
 
-    print(f"[fetch] {T2C_CSV_FILE} (1.3 GB, one file) ...", flush=True)
-    paths["t2c_csv"] = hf_hub_download(
-        T2C_CSV_REPO, T2C_CSV_FILE, repo_type="model", cache_dir=cache)
+    if "t2c_csv" in need:
+        print(f"[fetch] {T2C_CSV_FILE} (1.3 GB, one file) ...", flush=True)
+        paths["t2c_csv"] = hf_hub_download(
+            T2C_CSV_REPO, T2C_CSV_FILE, repo_type="model", cache_dir=cache)
 
-    print("[fetch] DeepCAD test meshes (260 MB in 8,048 files, ~3-6 min) ...", flush=True)
-    paths["deepcad_meshes"] = snapshot_download(
-        DEEPCAD_MESH_REPO, repo_type="dataset", cache_dir=cache,
-        max_workers=16)
+    if "deepcad_meshes" in need:
+        print("[fetch] DeepCAD test meshes (260 MB in 8,048 files, ~3-6 min) ...", flush=True)
+        paths["deepcad_meshes"] = snapshot_download(
+            DEEPCAD_MESH_REPO, repo_type="dataset", cache_dir=cache,
+            max_workers=16)
 
-    print("[fetch] CadQuery ground truth (83 MB) ...", flush=True)
-    zip_path = hf_hub_download(
-        CADQUERY_GT_REPO, "text2cad.zip", repo_type="dataset", cache_dir=cache)
-    cq_dir = os.path.join(cache, "text2cad_cadquery")
-    if not os.path.isdir(os.path.join(cq_dir, "cadquery")):
-        import zipfile
-        with zipfile.ZipFile(zip_path) as z:
-            z.extractall(cq_dir)
-    paths["cadquery_gt"] = cq_dir
+    if "cadquery_gt" in need:
+        print("[fetch] CadQuery ground truth (83 MB) ...", flush=True)
+        zip_path = hf_hub_download(
+            CADQUERY_GT_REPO, "text2cad.zip", repo_type="dataset", cache_dir=cache)
+        cq_dir = os.path.join(cache, "text2cad_cadquery")
+        if not os.path.isdir(os.path.join(cq_dir, "cadquery")):
+            import zipfile
+            with zipfile.ZipFile(zip_path) as z:
+                z.extractall(cq_dir)
+        paths["cadquery_gt"] = cq_dir
     print("[fetch] done", flush=True)
     return paths
+
+
+def deepcad_test_uids(cache: str) -> set:
+    """The uids in DeepCAD's test split, for split B's contamination flag.
+
+    Split B needs to know *which* uids are in the test set, not what they look
+    like -- so this reads the repo's file listing (one API call) instead of
+    downloading 8,048 meshes. Rebuilding split B used to pull 1.6 GB it had no
+    use for, which made a routine prompt change hostage to a long download.
+
+    Falls back to an already-downloaded snapshot when the API is unreachable,
+    and only then downloads one.
+    """
+    try:
+        from huggingface_hub import HfApi
+        files = HfApi().list_repo_files(DEEPCAD_MESH_REPO, repo_type="dataset")
+        uids = {os.path.basename(f)[:-4] for f in files if f.endswith(".stl")}
+        if uids:
+            print(f"[fetch] {len(uids)} DeepCAD test uids from the repo listing "
+                  f"(no download needed)", flush=True)
+            return uids
+    except Exception as e:
+        print(f"[fetch] could not list {DEEPCAD_MESH_REPO} ({type(e).__name__}); "
+              f"falling back to a local snapshot", flush=True)
+
+    from huggingface_hub import snapshot_download
+    local = snapshot_download(DEEPCAD_MESH_REPO, repo_type="dataset",
+                              cache_dir=cache, max_workers=16)
+    return {f[:-4] for f in os.listdir(_find_mesh_dir(local)) if f.endswith(".stl")}
 
 
 # --------------------------------------------------------------------------- #
@@ -308,7 +348,7 @@ def find_cadprompt_root(start: str) -> str:
         f"no CADPrompt uid directories (8-digit dirs containing Ground_Truth.stl) under {start}")
 
 
-def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str,
+def build_split_b(cadprompt_dir: str, test_uids: set, out_dir: str,
                   keep_language_instruction: bool = False) -> str:
     """CADPrompt, with the contamination flag that makes it usable.
 
@@ -316,8 +356,13 @@ def build_split_b(cadprompt_dir: str, deepcad_mesh_dir: str, out_dir: str,
     every fine-tuned system here and by none of the general LLMs. Flagging each
     row turns a misleading aggregate into a memorisation probe.
     """
-    cadprompt_dir = find_cadprompt_root(cadprompt_dir)
-    test_uids = {f[:-4] for f in os.listdir(deepcad_mesh_dir) if f.endswith(".stl")}
+    root = find_cadprompt_root(cadprompt_dir)
+    if not root:
+        raise SystemExit(
+            f"no CADPrompt uid directories under {cadprompt_dir}. Expected a clone of "
+            f"https://github.com/Kamel773/CAD_Code_Generation containing 8-digit "
+            f"directories with Ground_Truth.stl inside.")
+    cadprompt_dir = root
     uids = sorted(d for d in os.listdir(cadprompt_dir)
                   if d.isdigit() and os.path.isdir(os.path.join(cadprompt_dir, d)))
     print(f"[split B] {len(uids)} CADPrompt objects")
@@ -399,7 +444,10 @@ def main() -> None:
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    paths = fetch_assets(args.cache, quiet=not args.verbose_downloads)
+    # Split B opens none of these; it only needs the test-uid set, which comes
+    # from a repo listing. Fetching per stage keeps a prompt-only rebuild cheap.
+    need = () if args.stage == "b" else ALL_ASSETS
+    paths = fetch_assets(args.cache, quiet=not args.verbose_downloads, need=need)
     print(json.dumps({k: str(v) for k, v in paths.items()}, indent=2))
     if args.stage == "fetch":
         return
@@ -410,7 +458,10 @@ def main() -> None:
     if args.stage in ("all", "b"):
         if not args.cadprompt_dir:
             raise SystemExit("--cadprompt-dir is required for split B")
-        build_split_b(args.cadprompt_dir, _find_mesh_dir(paths["deepcad_meshes"]), args.out,
+        test_uids = ({f[:-4] for f in os.listdir(_find_mesh_dir(paths["deepcad_meshes"]))
+                      if f.endswith(".stl")} if "deepcad_meshes" in paths
+                     else deepcad_test_uids(args.cache))
+        build_split_b(args.cadprompt_dir, test_uids, args.out,
                       keep_language_instruction=args.keep_cadquery_instruction)
 
 
