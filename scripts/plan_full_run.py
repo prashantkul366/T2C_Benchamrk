@@ -53,6 +53,12 @@ def main() -> None:
     ap.add_argument("--text2cad-repo", default=None)
     ap.add_argument("--text2cad-ckpt", default=None)
     ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--zero-shot", action="store_true",
+                    help="general LLMs only: run the general_zero_shot template instead, "
+                         "writing to <name>_0shot_split*.jsonl. The 1-shot number is the "
+                         "headline; the gap between the two is how much of a general "
+                         "model's deficit was only ever output formatting. Models with a "
+                         "native template are skipped -- a fine-tune has no 0-shot variant.")
     ap.add_argument("--run", action="store_true",
                     help="execute the commands instead of printing them")
     args = ap.parse_args()
@@ -74,13 +80,27 @@ def main() -> None:
         if not isinstance(cfg, dict):
             skipped.append((name, "not in configs/models.yaml"))
             continue
+
+        out_name = name
+        if args.zero_shot:
+            # Only the prompted general LLMs have a 0-shot variant. Gate on the
+            # runner, not on the template: cadrille declares no template at all
+            # and so defaults to general_one_shot, which would otherwise sweep a
+            # fine-tuned system into the general-LLM comparison.
+            if cfg["runner"] != "hf" or cfg.get("template", "").startswith("native."):
+                skipped.append((name, "fine-tuned system; no 0-shot variant"))
+                continue
+            cfg = dict(cfg, template="general_zero_shot")
+            # score_all.py already strips this suffix to find the adapter.
+            out_name = f"{name}_0shot"
+
         for split in SPLITS:
             split_file = os.path.join(args.data, f"split_{split.lower()}.jsonl")
             if not os.path.exists(split_file):
                 skipped.append((f"{name} split{split}", f"missing {split_file}"))
                 continue
-            out = os.path.join(raw_dir, f"{name}_split{split}_pass_at_1.jsonl")
-            cmd = build_gen_cmd(name, cfg, split_file, out, None, repos,
+            out = os.path.join(raw_dir, f"{out_name}_split{split}_pass_at_1.jsonl")
+            cmd = build_gen_cmd(out_name, cfg, split_file, out, None, repos,
                                 batch_size=args.batch_size)
             if cmd is None:
                 need = {"cadrille": "--cadrille-repo",
