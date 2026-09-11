@@ -68,7 +68,7 @@ def select_best_of_k(df: pd.DataFrame) -> pd.DataFrame:
 AGG_COLUMNS = ["n", "IR_%", "P_ok", "P_usable", "CD_median", "CD_mean",
                "CD_mean_trim5", "F1_002", "F1_005", "IoU_voxel", "IoU_n",
                "HD95_median", "n_scored", "IoU_bool", "IoU_bool_coverage",
-               "Score"]
+               "Score", "Score_lo", "Score_hi"]
 
 
 def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
@@ -124,9 +124,24 @@ def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
             rec["IoU_bool"] = float(np.mean(b)) if len(b) else np.nan
             rec["IoU_bool_coverage"] = len(b) / n if n else 0.0
 
-        # The ranking number. F1 over ALL prompts (failures contribute 0), which
-        # is identical to P(ok-and-scored) x mean F1 over scored.
-        rec["Score"] = float(v["f1_002"].sum() / n) if n else 0.0
+        # The ranking number: F1 over ALL prompts, with every prompt that did not
+        # yield a *valid solid* contributing 0. Credit requires validity == OK,
+        # matching the documented `Score = P(OK) x F1@0.02`.
+        #
+        # This used to sum over `scored`, which includes NON_MANIFOLD -- geometry
+        # good enough to measure but not a closed solid, and so not
+        # manufacturable. The difference is not cosmetic: on the first full run it
+        # inverted the top two (cadrille 0.2094 vs text2cad 0.2092 including
+        # NON_MANIFOLD; text2cad 0.2018 vs cadrille 0.1984 excluding it), so the
+        # benchmark's "winner" turned on an undocumented implementation choice.
+        per_prompt = np.zeros(n)
+        okv = g[(g["validity"] == "OK") & g["f1_002"].notna()]
+        per_prompt[:len(okv)] = okv["f1_002"].values
+        rec["Score"] = float(per_prompt.sum() / n) if n else 0.0
+        # A ranking without an interval invites overclaiming: the top two models
+        # on the first full run were 0.003 apart against a 95% CI of +-0.025.
+        lo, hi = _bootstrap_ci(per_prompt, seed=0)
+        rec["Score_lo"], rec["Score_hi"] = lo, hi
         rows.append(rec)
 
     if not rows:
@@ -134,6 +149,19 @@ def aggregate(df: pd.DataFrame, by: list[str] | None = None) -> pd.DataFrame:
 
     out = pd.DataFrame(rows)
     return out.sort_values("Score", ascending=False).reset_index(drop=True)
+
+
+def _bootstrap_ci(x: np.ndarray, n_boot: int = 2000, seed: int = 0,
+                  pct: tuple = (2.5, 97.5)) -> tuple[float, float]:
+    """Percentile bootstrap CI for the mean of a per-prompt score vector."""
+    x = np.asarray(x, dtype=float)
+    if len(x) < 2:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(x), size=(n_boot, len(x)))
+    means = x[idx].mean(axis=1)
+    lo, hi = np.percentile(means, pct)
+    return float(lo), float(hi)
 
 
 def _trimmed_mean(x: np.ndarray, frac: float) -> float:
@@ -226,7 +254,7 @@ def table_validity(df: pd.DataFrame) -> pd.DataFrame:
 # references the voxel grid can actually represent -- and a subset mean without
 # its n invites the reader to compare two numbers computed over different rows.
 MAIN_COLS = ["model", "level", "n", "IR_%", "CD_median", "CD_mean", "F1_002",
-             "IoU_voxel", "IoU_n", "HD95_median", "Score"]
+             "IoU_voxel", "IoU_n", "HD95_median", "Score", "Score_lo", "Score_hi"]
 
 
 def to_markdown(df: pd.DataFrame, cols: list[str] | None = None, floatfmt: int = 4) -> str:
