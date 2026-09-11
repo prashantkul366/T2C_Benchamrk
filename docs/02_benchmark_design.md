@@ -261,6 +261,14 @@ to produce absolute dimensions.
   no defined value, report (a) median over valid only *and* (b) a **coverage-adjusted score**
   `CD@P = median CD over valid, reported alongside P(OK)`, plus a single scalar
   **`Score = P(OK) × F1@0.02`** for a ranking that cannot be gamed by emitting nothing.
+  Credit requires `validity == OK`: a `NON_MANIFOLD` mesh is measurable but is not a closed solid
+  and so is not manufacturable, and it earns no ranking credit. This is not a cosmetic choice — on
+  the first full run, including `NON_MANIFOLD` inverted the top two.
+
+  **Every Score is reported with a 95% percentile-bootstrap CI over prompts**, because the top of
+  this leaderboard is a tie and a bare ranking hides that: text2cad 0.2018 [0.1786, 0.2263] against
+  cadrille 0.1984 [0.1691, 0.2265], a paired difference of -0.0034 with a 95% CI of
+  [-0.0284, +0.0215]. Do not claim a winner between models whose intervals overlap this heavily.
 
 That last point matters: a model that answers 10% of prompts perfectly and fails the rest would top
 a median-CD-over-valid-only leaderboard. `P(OK) × F1` cannot be gamed that way.
