@@ -55,10 +55,41 @@ def resolve_template(cfg: dict, key: str) -> dict:
     raise KeyError(f"template {key!r} must be a string or a mapping with a 'user' key")
 
 
+def _load_lm(model_id: str, **kwargs):
+    """Load a text-generating model, whatever auto-class it is registered under.
+
+    Qwen2-VL is not in AutoModelForCausalLM's mapping -- it lives under
+    vision2seq / image-text-to-text -- so `AutoModelForCausalLM.from_pretrained`
+    raises on it outright. It is still a perfectly good text-only generator when
+    handed no images, and it is cadrille's base model, so refusing to load it
+    would cost one of the three controlled ablations this benchmark is built on.
+    Try causal first, then the multimodal classes across transformers versions.
+    """
+    from transformers import AutoModelForCausalLM
+    try:
+        return AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
+    except (ValueError, KeyError) as e:
+        import transformers
+        for cls_name in ("AutoModelForImageTextToText",   # transformers >= 4.49
+                         "AutoModelForVision2Seq"):       # older
+            cls = getattr(transformers, cls_name, None)
+            if cls is None:
+                continue
+            try:
+                m = cls.from_pretrained(model_id, **kwargs)
+                print(f"loaded via {cls_name} (not registered for causal LM)")
+                return m
+            except Exception:
+                continue
+        raise RuntimeError(
+            f"{model_id} loads under neither AutoModelForCausalLM nor the "
+            f"multimodal auto-classes: {e}") from e
+
+
 def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
                 subfolder: str | None = None):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
 
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                    "fp32": torch.float32}[dtype]
@@ -74,7 +105,7 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
         # LoRA adapter on top of a separately-hosted base (CADmium, CADFusion).
         from peft import PeftModel
         print(f"loading base {base}")
-        model = AutoModelForCausalLM.from_pretrained(base, **kwargs)
+        model = _load_lm(base, **kwargs)
 
         # CADFusion added a [PAD] token and resized the embeddings before training,
         # and saved the resized embed_tokens/lm_head into the adapter -- so loading
@@ -96,7 +127,7 @@ def build_model(model_id: str, base: str | None, dtype: str, load_4bit: bool,
         tok_src = model_id
     else:
         print(f"loading {model_id}")
-        model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
+        model = _load_lm(model_id, **kwargs)
         tok_src = model_id
 
     try:
