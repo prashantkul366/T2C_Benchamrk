@@ -17,6 +17,10 @@ def main():
     # known-good samples "failed" purely on contention, and a TIMEOUT is counted
     # against the model.
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--no-keep-meshes", action="store_true",
+                    help="do not write a .stl per sample. 6,300 of them is 1-2 GB and can "
+                         "exhaust a scoring box mid-run; the figure renderer rebuilds the "
+                         "handful it needs from the raw predictions anyway.")
     ap.add_argument("--force", action="store_true", help="rescore files already scored")
     args = ap.parse_args()
 
@@ -36,15 +40,17 @@ def main():
             print(f"skip (already scored): {stem}")
             continue
         print(f"\n>>> {stem}   adapter={adapter}")
-        subprocess.run([
+        cmd = [
             sys.executable, "-m", "t2cbench.evaluate",
             "--predictions", raw,
             "--split", os.path.join(args.data, f"split_{split_letter}.jsonl"),
             "--adapter", adapter, "--model-name", name,
-            "--keep-meshes", os.path.join(args.work, "meshes", name),
             "--out", scored, "--workers", str(args.workers),
             "--timeout", str(args.timeout),
-        ], check=True)
+        ]
+        if not args.no_keep_meshes:
+            cmd += ["--keep-meshes", os.path.join(args.work, "meshes", name)]
+        subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":
