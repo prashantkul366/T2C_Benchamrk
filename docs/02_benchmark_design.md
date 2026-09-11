@@ -357,12 +357,20 @@ default — it costs money and needs keys, so it is your call.
    re-parameterisation of the output format requires re-checking this**, and the check is cheap:
    count outputs that do not end in the format's own terminator.
 8. **Text2CAD cannot read long prompts.** Its BERT encoder is capped at 512 tokens
-   (`max_seq_len: 512`), which **10% of Split A prompts — all L3 — exceed**. This is architectural
-   to the published model, not a choice of ours, so it is reported rather than fixed; but its L3
-   column must be read as "the part of the prompt that fitted".
-9. **CADFusion truncates at its own limit.** 4.6% of its Split A outputs end without
-   `<extrude_end>` at the 512-token `MAX_LENGTH` taken from its own inference code. Kept as native,
-   but it means a few points of its invalidity are budget, not ability.
+   (`max_seq_len: 512`), and `Cad_VLM/models/layers/text_embed.py` calls the tokenizer with
+   `truncation=True`, so anything past it is dropped **silently**. Measured with
+   `google-bert/bert-large-uncased` against the built split: **70 of 500 Split A prompts (14.0%)
+   exceed the cap, all of them L3 — which is 56% of every L3 prompt.** The *median* L3 prompt is
+   539 tokens, i.e. already over the limit (L0 median 31, L1 52, L2 135; max L3 2,258). This is
+   architectural to the published model, not a choice of ours, so it is reported rather than fixed;
+   but its L3 column must be read as "the first 512 tokens of the prompt". It cuts both ways: it is
+   a caveat on the L3 number and also a point in the model's favour, since it reaches Score 0.4209
+   at L3 while seeing roughly half of the median L3 prompt.
+9. **CADFusion truncates at its own limit** -- the 512-token `MAX_LENGTH` taken from its own
+   inference code. 4.6% of its Split A outputs do not *end* with `<extrude_end>`, i.e. were cut
+   mid-sequence; 2.4% contain no `<extrude_end>` anywhere. Kept as native, but it means a few points
+   of its invalidity are budget, not ability. It does not explain its inverted level trend: 4.6%
+   cannot account for a 43% relative Score drop from L0 to L3, so that trend is real behaviour.
 10. **Batch-size determinism is assumed, not proven.** All models are generated at batch size 8
     with left padding, so any batching effect applies equally and is a reproducibility caveat
     rather than a fairness one — but greedy decoding under left padding is not guaranteed
