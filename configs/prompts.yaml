@@ -141,8 +141,18 @@ generation:
   # Per-system token budgets. These are architectural or trained limits, not
   # tuning knobs: raising them past the trained limit produces garbage, lowering
   # them truncates. They are the one setting that legitimately differs.
+  # The rule: a model's own native limit where it has one, otherwise a budget
+  # large enough that it never binds. "1024 for everyone" sounds equal and is
+  # not: the budget is spent in a representation-dependent currency, and
+  # CADmium's pretty-printed JSON is by far the most expensive per unit of
+  # geometry (~3.1 chars/token against ~2.6 for CadQuery code). At 1024 it
+  # truncated 109 of its 500 split-A outputs mid-number, which the adapter then
+  # scored PARSE_FAIL -- 22% of its samples failing on our budget, not its
+  # ability. Its longest *complete* output measured 1,019 tokens, i.e. the cap
+  # was binding exactly at the boundary.
   max_new_tokens:
     default: 1024
+    cadmium: 2048        # 2x its longest complete output; 1024 was binding
     cadrille: 768        # its trained generation length
-    cadfusion: 512       # src/test/utils.py MAX_LENGTH
+    cadfusion: 512       # src/test/utils.py MAX_LENGTH -- theirs, kept as native
     text2cad: 272        # MAX_CAD_SEQUENCE_LENGTH, architectural

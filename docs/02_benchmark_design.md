@@ -340,6 +340,38 @@ default — it costs money and needs keys, so it is your call.
 5. **n=13 clean CADPrompt** is too small for ranking; it is used only as a contamination probe.
 6. **The 1-shot example** in the general-LLM prompt is itself a design choice that advantages
    general LLMs relative to a 0-shot setting; both are reported.
+7. **The token budget is spent in a representation-dependent currency.** "1024 tokens for
+   everyone" sounds equal and is not: CADmium's pretty-printed JSON costs ~3.1 chars/token against
+   ~2.6 for CadQuery code, so the same budget buys it far less geometry. Measured on the first full
+   run, 109 of its 500 Split A outputs were truncated mid-number and scored `PARSE_FAIL` — 22% of
+   its samples failing on our budget rather than its ability — and its longest *complete* output
+   was 1,019 tokens, i.e. the cap bound exactly at the boundary. Its budget is now 2048. **Any
+   re-parameterisation of the output format requires re-checking this**, and the check is cheap:
+   count outputs that do not end in the format's own terminator.
+8. **Text2CAD cannot read long prompts.** Its BERT encoder is capped at 512 tokens
+   (`max_seq_len: 512`), which **10% of Split A prompts — all L3 — exceed**. This is architectural
+   to the published model, not a choice of ours, so it is reported rather than fixed; but its L3
+   column must be read as "the part of the prompt that fitted".
+9. **CADFusion truncates at its own limit.** 4.6% of its Split A outputs end without
+   `<extrude_end>` at the 512-token `MAX_LENGTH` taken from its own inference code. Kept as native,
+   but it means a few points of its invalidity are budget, not ability.
+10. **Batch-size determinism is assumed, not proven.** All models are generated at batch size 8
+    with left padding, so any batching effect applies equally and is a reproducibility caveat
+    rather than a fairness one — but greedy decoding under left padding is not guaranteed
+    bit-identical to batch size 1, and that has not been verified on a GPU.
+
+### 8.1 Fairness properties that were verified, not assumed
+
+Checked against the recorded artefacts of the first full 6,300-generation run:
+
+| Property | Evidence |
+|---|---|
+| Every model saw the same prompts | identical 500 Split A `sample_id`s across all 7; the split's task text appears verbatim inside every recorded `prompt_sent` |
+| No input truncation | longest prompt ~2,900 tokens against the runner's 4,096 cap |
+| Decoding identical | `do_sample=False` for all; each model's own sampling config is explicitly overridden |
+| Adapter leniency not tilted | extraction repair changed **0/500** outputs for cadrille and both Text-to-CadQuery models; it *rescued* 46 CADmium samples. The generous path exists for every representation and is used only where needed |
+| Machine load absent from results | 1 `TIMEOUT` in 6,300 samples (0.02%) |
+| Scoring path agrees with itself | `evaluate.py` and `score_export.py` match to printed precision on identical inputs |
 
 ---
 
