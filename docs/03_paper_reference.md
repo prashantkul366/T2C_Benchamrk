@@ -6,9 +6,10 @@ open. Numbers here were re-derived from the recorded artefacts of the run, not f
 figure in an earlier doc disagrees with this one, **this one is correct** (see §14.1 for the
 corrections).
 
-Status at time of writing: the seven specialised systems have a complete 900-prompt run scored.
-Five of six general LLMs have generated and are awaiting scoring. CADmium is being regenerated
-against a corrected token budget; Llama-3-8B-Instruct is blocked on a licence gate.
+Status: **complete**. All 13 systems have a full 900-prompt run generated and scored — 11,700
+samples, 0 timeouts, 0 harness errors. CADmium has been regenerated against the corrected token
+budget and Llama-3-8B-Instruct's licence gate is cleared, so every row and every ablation pair is
+populated. Outstanding: the best-of-5 table and the sequence-F1 table (§16.3).
 
 ---
 
@@ -26,8 +27,9 @@ statistical tie. The claims that survive scrutiny are:
    L0→L3 within a single model is up to **41×**; the spread across models at a fixed level is under 2×.
 3. Failure is representation-structured: which *kind* of failure a system has is predicted by what
    it emits, not by how good it is. A scalar invalidity ratio destroys this signal.
-4. Three controlled base-vs-fine-tuned ablations (same weights, same prompts, same metrics) isolate
-   what CAD fine-tuning actually buys.
+4. Four controlled base-vs-fine-tuned ablations (same weights, same prompts, same metrics) show what
+   CAD fine-tuning actually buys: reliability, not always geometry — and one RL variant scores below
+   its own un-fine-tuned base.
 5. Benchmark protocol choices — a token budget, a metric definition — move the ranking by more than
    the difference between the top two models. We demonstrate this on our own benchmark.
 
@@ -41,11 +43,11 @@ found two protocol defects that each changed the answer, and we report both.
 | RQ | Question | Where answered |
 |----|----------|----------------|
 | RQ1 | Can the five published systems be compared at all from their papers? | §4 — no, and we quantify why |
-| RQ2 | Under one protocol, how do they actually rank? | §12.1 |
-| RQ3 | How much of a system's score is prompt specificity rather than CAD ability? | §12.4, §13.1 |
-| RQ4 | Does CAD fine-tuning beat a general code LLM of the same size? | §12.6 (pending general-LLM scoring) |
-| RQ5 | How much of the reported performance on CADPrompt is memorisation? | §12.3, §13.6 |
-| RQ6 | Where does each representation fail, and is that a property of the model or the format? | §12.5, §13.5 |
+| RQ2 | Under one protocol, how do they actually rank? | §12.1 — a three-way tie at the top |
+| RQ3 | How much of a system's score is prompt specificity rather than CAD ability? | §12.2, §13.1, §13.3 |
+| RQ4 | Does CAD fine-tuning beat a general code LLM of the same size? | §12.3, §12.4, §13.3, §13.4 |
+| RQ5 | How much of the reported performance on CADPrompt is memorisation? | §12.5, §13.6 — the control refutes the probe |
+| RQ6 | Where does each representation fail, and is that a property of the model or the format? | §12.7, §13.5 |
 | RQ7 | How sensitive is the ranking to benchmark design choices? | §13.8 — more sensitive than to the models |
 
 ---
@@ -620,306 +622,381 @@ All numbers: Split A, **pass@1**, greedy, n = 500 prompts per model (125 shapes 
 CD is ×1000 symmetric squared Chamfer after canonicalisation. `Score = P(OK) × mean F1@0.02` over all
 500 prompts, failures counted as zero. CIs are 95% percentile bootstrap over prompts.
 
+**Run of record: 13 models × 900 prompts = 11,700 scored samples, 0 timeouts, 0 harness errors.**
+
 ### 12.1 Main table — Split A, pooled (RQ2)
 
-| Model | IR % | P(OK) | CD median | CD mean | F1@0.02 | IoU | IoU n | HD95 | **Score** | 95% CI |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **text2cad** | 10.8 | 0.892 | 51.51 | 68.22 | 0.2235 | 0.2145 | 416 | 0.329 | **0.2018** | [0.1786, 0.2263] |
-| **cadrille** | 13.4 | 0.866 | 93.25 | 111.79 | 0.2271 | 0.2122 | 412 | 0.431 | **0.1984** | [0.1691, 0.2265] |
-| cadmium-7b | 61.6 | 0.384 | **27.06** | 43.85 | **0.3939** | **0.4224** | 203 | 0.241 | 0.1633 | [0.1341, 0.1921] |
-| t2cq-mistral-7b | 10.6 | 0.894 | 44.34 | 62.01 | 0.1688 | 0.1905 | 413 | 0.306 | 0.1512 | [0.1332, 0.1696] |
-| t2cq-qwen-3b | **8.0** | **0.920** | 44.60 | 62.99 | 0.1621 | 0.1805 | 423 | 0.306 | 0.1488 | [0.1318, 0.1665] |
-| cadfusion-v1.1 | 16.2 | 0.838 | 51.24 | 61.18 | 0.1300 | 0.1340 | 379 | 0.325 | 0.1081 | [0.0961, 0.1210] |
-| cadrille-rl | 52.0 | 0.480 | 145.02 | 154.08 | 0.0113 | 0.0000 | 213 | 0.562 | 0.0054 | [0.0040, 0.0070] |
+| Model | family | IR % | P(OK) | CD med | F1@0.02 | IoU | IoU n | **Score** | 95% CI |
+|---|---|---|---|---|---|---|---|---|---|
+| **text2cad** | spec | 10.8 | 0.892 | 51.51 | 0.2235 | 0.2145 | 416 | **0.2018** | [0.1786, 0.2263] |
+| **cadmium-7b** | spec | 52.6 | 0.474 | **26.31** | **0.3938** | **0.4125** | 257 | **0.1991** | [0.1687, 0.2302] |
+| **cadrille** | spec | 13.4 | 0.866 | 93.25 | 0.2271 | 0.2122 | 412 | **0.1984** | [0.1691, 0.2265] |
+| t2cq-mistral-7b | spec | 10.6 | 0.894 | 44.34 | 0.1688 | 0.1905 | 413 | 0.1512 | [0.1332, 0.1696] |
+| t2cq-qwen-3b | spec | **8.0** | **0.920** | 44.60 | 0.1621 | 0.1805 | 423 | 0.1488 | [0.1318, 0.1665] |
+| cadfusion-v1.1 | spec | 16.2 | 0.838 | 51.24 | 0.1300 | 0.1340 | 379 | 0.1081 | [0.0961, 0.1210] |
+| deepseek-coder-6.7b | gen | 55.8 | 0.442 | 37.38 | 0.2037 | 0.1994 | 200 | 0.0901 | [0.0744, 0.1061] |
+| qwen25-coder-32b | gen | 59.2 | 0.408 | 36.47 | 0.1968 | 0.2059 | 194 | 0.0813 | [0.0655, 0.0971] |
+| qwen25-coder-7b | gen | 67.8 | 0.322 | 40.47 | 0.2169 | 0.2260 | 142 | 0.0714 | [0.0568, 0.0857] |
+| llama3-8b-instruct | gen | 82.2 | 0.178 | 35.58 | 0.2201 | 0.2513 | 82 | 0.0392 | [0.0286, 0.0509] |
+| qwen2-vl-2b | gen | 92.2 | 0.078 | 30.16 | 0.1967 | 0.1974 | 35 | 0.0153 | [0.0093, 0.0225] |
+| mistral-7b-instruct | gen | 93.4 | 0.066 | 42.81 | 0.1415 | 0.1363 | 30 | 0.0093 | [0.0056, 0.0136] |
+| cadrille-rl | spec | 52.0 | 0.480 | 145.02 | 0.0113 | 0.0000 | 213 | 0.0054 | [0.0040, 0.0070] |
 
-**The top two are a statistical tie.** Paired bootstrap on the text2cad − cadrille gap:
-**−0.0034, 95% CI [−0.0284, +0.0215]**. The interval spans zero and is eight times wider than the
-point estimate. The paper must say "tied", not "text2cad wins".
+**The top three are a statistical tie.** text2cad 0.2018, cadmium-7b 0.1991, cadrille 0.1984 — a
+spread of 0.0034 against CIs roughly ±0.025 wide, all three overlapping almost completely. The paper
+must report a three-way tie, not a winner. (After the token-budget fix, CADmium moved from 0.1633
+into that tie; before it, the same model ranked third by a clear margin. See §13.8.)
+
+**Note the IoU coverage column.** `IoU_n` ranges from 30 (mistral-7b-instruct) to 423
+(t2cq-qwen-3b) out of 500. A mean IoU over 30 samples and one over 423 are not the same statistic.
+This is why IoU cannot be the ranking metric, and why conditional metrics must always be read
+beside P(OK).
 
 ### 12.2 Per-level table — Split A (the most important table in the study)
 
-| Model | L0 | L1 | L2 | L3 | L0→L3 ratio |
+Score by prompt level:
+
+| Model | family | L0 | L1 | L2 | L3 | pooled |
+|---|---|---|---|---|---|---|
+| text2cad | spec | 0.0914 | 0.1300 | 0.1650 | 0.4209 | 0.2018 |
+| cadmium-7b | spec | 0.0528 | 0.0583 | 0.1052 | **0.5801** | 0.1991 |
+| cadrille | spec | 0.0145 | 0.0246 | 0.1582 | **0.5963** | 0.1984 |
+| t2cq-mistral-7b | spec | 0.1039 | 0.1453 | 0.1569 | 0.1986 | 0.1512 |
+| t2cq-qwen-3b | spec | 0.1180 | 0.1305 | 0.1538 | 0.1931 | 0.1488 |
+| cadfusion-v1.1 | spec | **0.1290** | 0.1261 | 0.1033 | 0.0738 | 0.1081 |
+| deepseek-coder-6.7b | gen | 0.1085 | **0.1247** | 0.1114 | 0.0157 | 0.0901 |
+| qwen25-coder-32b | gen | 0.0887 | 0.1276 | 0.1071 | 0.0017 | 0.0813 |
+| qwen25-coder-7b | gen | 0.0544 | 0.1006 | 0.0882 | 0.0424 | 0.0714 |
+| llama3-8b-instruct | gen | 0.0380 | 0.0643 | 0.0544 | **0.0000** | 0.0392 |
+| qwen2-vl-2b | gen | 0.0015 | 0.0181 | 0.0160 | 0.0258 | 0.0153 |
+| mistral-7b-instruct | gen | 0.0121 | 0.0154 | 0.0098 | **0.0000** | 0.0093 |
+| cadrille-rl | spec | 0.0112 | 0.0101 | 0.0003 | 0.0000 | 0.0054 |
+
+**Two crossings, and they carry the paper.**
+
+1. **At L0 and L1 the best general LLM is competitive with, and sometimes beats, the specialised
+   systems.** At L1, deepseek-coder-6.7b (0.1247) and qwen25-coder-32b (0.1276) beat cadmium-7b
+   (0.0583) and cadrille (0.0246) by 2–5×, and sit within noise of text2cad (0.1300) and
+   cadfusion-v1.1 (0.1261). At L0, deepseek (0.1085) beats every specialised system except
+   cadfusion and the two Text-to-CadQuery models.
+2. **At L3 the general LLMs collapse to zero and the specialised systems peak.** llama3 and mistral
+   score exactly **0.0000**; qwen25-coder-32b scores 0.0017. Meanwhile cadrille reaches 0.5963 and
+   cadmium 0.5801 — a **350×** gap between the best specialised and the best general model on the
+   same 125 prompts.
+
+So the headline is not "fine-tuning helps". It is: **fine-tuning on DeepCAD buys almost nothing when
+the prompt is vague, and buys everything when the prompt is a transcription.** A benchmark that
+reports only a pooled number over a prompt corpus skewed to either end will reach the opposite
+conclusion from one skewed to the other.
+
+### 12.3 Ablation — base LLM vs its own fine-tuned descendant (RQ4)
+
+Same weights, same prompts, same metrics; paired bootstrap over prompts.
+
+| Base | Fine-tuned | Score base | Score FT | **Δ** | 95% CI | sig. | IR base % | IR FT % |
+|---|---|---|---|---|---|---|---|---|
+| Qwen2-VL-2B-Instruct | **cadrille** | 0.0153 | 0.1984 | **+0.1831** | [+0.1542, +0.2128] | ✔ | 92.2 | 13.4 |
+| Qwen2.5-Coder-7B-Instruct | **cadmium-7b** | 0.0714 | 0.1991 | **+0.1277** | [+0.0946, +0.1637] | ✔ | 67.8 | 52.6 |
+| Llama-3-8B-Instruct | **cadfusion-v1.1** | 0.0392 | 0.1081 | **+0.0689** | [+0.0526, +0.0865] | ✔ | 82.2 | 16.2 |
+| Qwen2-VL-2B-Instruct | **cadrille-rl** | 0.0153 | 0.0054 | **−0.0099** | [−0.0170, −0.0034] | ✔ | 92.2 | 52.0 |
+
+Three fine-tunes beat their own base significantly. **The RL variant is significantly *worse* than
+the un-fine-tuned model it descends from** — cadrille-rl loses to plain Qwen2-VL-2B-Instruct.
+
+### 12.4 What the ablation gain is actually made of — matched-subset analysis
+
+The headline Δ conflates two things. Restricting to the prompts **both** models built successfully
+separates them:
+
+| Base → fine-tuned | n both OK | CD base | CD FT | F1 base | F1 FT |
 |---|---|---|---|---|---|
-| **cadrille** | 0.0145 | 0.0246 | 0.1582 | **0.5963** | **41.1×** |
-| cadmium-7b | 0.0304 | 0.0509 | 0.0860 | 0.4861 | 16.0× |
-| text2cad | 0.0914 | 0.1300 | 0.1650 | 0.4209 | 4.6× |
-| t2cq-qwen-3b | 0.1180 | 0.1305 | 0.1538 | 0.1931 | 1.6× |
-| t2cq-mistral-7b | 0.1039 | 0.1453 | 0.1569 | 0.1986 | 1.9× |
-| **cadfusion-v1.1** | **0.1290** | 0.1261 | 0.1033 | **0.0738** | **0.57× (inverted)** |
-| cadrille-rl | 0.0112 | 0.0101 | 0.0003 | 0.0000 | 0.00× (collapse) |
+| qwen25-coder-7b → cadmium-7b | 77 | 41.22 | **39.47** | 0.2080 | **0.2825** |
+| llama3-8b-instruct → cadfusion-v1.1 | 80 | **32.47** | 55.19 | **0.2330** | 0.1401 |
+| qwen2-vl-2b → cadrille | 36 | **32.36** | 49.72 | 0.1851 | **0.3767** |
+| qwen2-vl-2b → cadrille-rl | 11 | **26.04** | 131.97 | **0.2096** | 0.0142 |
 
-Supporting CD medians at the extremes: cadrille L0 149.31 → L3 0.567; cadmium L0 47.74 → L3 **0.116**;
-text2cad L0 80.66 → L3 6.75; cadfusion L0 53.22 → L3 53.49 (flat-to-worse).
+**On prompts both can build, Llama-3-8B-Instruct produces better geometry than CADFusion**
+(F1 0.233 vs 0.140, CD 32.5 vs 55.2). CADFusion's entire measured advantage is reliability:
+IR 82.2% → 16.2%. cadrille is the opposite — it improves conditional quality (F1 0.185 → 0.377)
+*and* reliability. CADmium improves both modestly.
 
-**At L0, the ranking is almost exactly reversed from the pooled ranking.** cadfusion-v1.1 (last
-overall) is *best* at L0; cadrille (2nd overall) is 6th at L0.
+Caveat to state: n is 36–80, and the matched subset is by construction the easy tail of the
+distribution, so these are descriptive, not inferential.
 
-### 12.3 Contamination probe — Split B (RQ5)
+A second, sharper statistic from the same data — **which prompts each base model could build at all**:
 
-n_clean = 26 rows (13 uids × 2 prompt variants), n_contaminated = 374 rows (187 × 2).
-
-| Model | Score clean | Score contam. | CD med clean | CD med contam. | IR% clean | IR% contam. | **gap** |
-|---|---|---|---|---|---|---|---|
-| t2cq-qwen-3b | 0.1757 | 0.2212 | 58.10 | 37.11 | 3.85 | 6.68 | **+0.0455** |
-| cadrille | 0.0404 | 0.0847 | 158.19 | 115.89 | 7.69 | 18.18 | **+0.0444** |
-| t2cq-mistral-7b | 0.1821 | 0.2201 | 57.84 | 35.68 | 3.85 | 8.82 | **+0.0380** |
-| cadrille-rl | 0.0089 | 0.0107 | 149.13 | 134.53 | 42.31 | 50.53 | +0.0018 |
-| cadfusion-v1.1 | 0.1578 | 0.1398 | 82.35 | 47.37 | 0.00 | 7.75 | −0.0180 |
-| cadmium-7b | 0.1436 | 0.1195 | 50.24 | 35.70 | 42.31 | 58.02 | −0.0241 |
-| text2cad | 0.1898 | 0.1537 | 79.90 | 64.92 | 3.85 | 7.22 | −0.0360 |
-
-**Read this table carefully and report it honestly** — see §13.6. The direction is *not* consistent
-across models, which is itself the finding.
-
-### 12.4 Complexity table — Split A
-
-Score by CAD-sequence complexity bin (n_extrusions × n_curves):
-
-| Model | simple (128) | moderate (176) | complex (100) | very_complex (96) | simple→v.complex |
-|---|---|---|---|---|---|
-| cadmium-7b | 0.2272 | 0.2312 | 0.1001 | 0.0196 | **11.6× drop** |
-| text2cad | 0.3060 | 0.2026 | 0.1624 | 0.1026 | 3.0× drop |
-| cadrille | 0.2304 | 0.2281 | 0.1717 | 0.1293 | 1.8× drop |
-| t2cq-qwen-3b | 0.1782 | 0.1360 | 0.1747 | 0.1063 | 1.7× drop |
-| t2cq-mistral-7b | 0.1591 | 0.1456 | 0.1836 | 0.1170 | 1.4× drop |
-| cadfusion-v1.1 | 0.1091 | 0.0949 | 0.1298 | 0.1081 | flat |
-| cadrille-rl | 0.0074 | 0.0059 | 0.0050 | 0.0023 | 3.2× drop |
-
-### 12.5 Failure modes — Split A, % of 500 (RQ6)
-
-| Model | OK | PARSE_FAIL | EXEC_FAIL | EMPTY_SOLID | INVALID_SOLID | NON_MANIFOLD | TIMEOUT |
-|---|---|---|---|---|---|---|---|
-| t2cq-qwen-3b | 92.0 | 0.6 | 4.4 | 0.0 | 0.0 | 2.8 | 0.2 |
-| t2cq-mistral-7b | 89.4 | 2.6 | 4.8 | 0.2 | 0.0 | 3.0 | 0.0 |
-| text2cad | 89.2 | **0.0** | 1.4 | **3.2** | **1.8** | 4.4 | 0.0 |
-| cadrille | 86.6 | 0.2 | 7.2 | 0.4 | 0.0 | 5.6 | 0.0 |
-| cadfusion-v1.1 | 83.8 | 5.0 | 9.4 | 0.2 | 0.6 | 1.0 | 0.0 |
-| cadmium-7b | 38.4 | **23.6** | **26.8** | 0.6 | 4.4 | 6.2 | 0.0 |
-| cadrille-rl | 48.0 | **52.0** | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-
-### 12.6 Ablation table — base vs fine-tuned (RQ4)
-
-**Pending.** Five of six general LLMs have generated (900 prompts each) and are awaiting scoring;
-`llama3-8b-instruct` is blocked on the Meta licence gate for the *Instruct* repo (a separate
-acceptance from the base repo CADFusion uses). Pairs to be filled:
-
-| Base | Fine-tuned | Base Score | FT Score | Δ |
+| Base model | OK at L0 | L1 | L2 | **L3** |
 |---|---|---|---|---|
-| Qwen2.5-Coder-7B-Instruct | cadmium-7b | — | 0.1633* | — |
-| Llama-3-8B-Instruct | cadfusion-v1.1 | *blocked* | 0.1081 | — |
-| Qwen2-VL-2B-Instruct | cadrille | — | 0.1984 | — |
-| Qwen2-VL-2B-Instruct | cadrille-rl | — | 0.0054 | — |
+| qwen25-coder-7b | 51 | 56 | 40 | 14 |
+| llama3-8b-instruct | 32 | 37 | 20 | **0** |
+| qwen2-vl-2b | 1 | 11 | 10 | 17 |
 
-\* CADmium's figure will change after the token-budget re-run (§13.8).
+**Llama-3-8B-Instruct produced zero valid solids across all 125 L3 prompts.**
 
-### 12.7 Figures produced
+### 12.5 Contamination probe — Split B, with a negative control (RQ5)
 
-1. `fig1_failure_modes.png` — stacked validity-code bars per model (8 codes, grouped to 4 for
-   legibility; all 8 stay in the CSV).
-2. `fig2_level_sensitivity.png` — CD and Score vs L0→L3, one line per model. **This is the plot that
-   shows which systems only work when the prompt is a transcription of the answer.**
-3. `fig3_qualitative.png` / `parts_full_splitA.png` — render grid, rows = models, columns = prompts
-   spanning L0–L3 and easy→hard, GT in the top row, CD/IoU annotated per cell.
+n_clean = 26 rows (13 uids × 2 variants), n_contaminated = 374 rows (187 × 2).
+
+| Model | family | Score clean | Score contam. | gap | CD med clean | CD med contam. |
+|---|---|---|---|---|---|---|
+| t2cq-qwen-3b | spec | 0.1757 | 0.2212 | **+0.0455** | 58.10 | 37.11 |
+| cadrille | spec | 0.0404 | 0.0847 | **+0.0444** | 158.19 | 115.89 |
+| t2cq-mistral-7b | spec | 0.1821 | 0.2201 | **+0.0380** | 57.84 | 35.68 |
+| **llama3-8b-instruct** | **gen** | 0.0776 | 0.1109 | **+0.0333** | 85.75 | **18.15** |
+| **deepseek-coder-6.7b** | **gen** | 0.1200 | 0.1312 | **+0.0112** | 88.12 | **32.10** |
+| **qwen2-vl-2b** | **gen** | 0.0000 | 0.0074 | +0.0074 | — | 0.15 |
+| cadrille-rl | spec | 0.0089 | 0.0107 | +0.0018 | 149.13 | 134.53 |
+| qwen25-coder-32b | gen | 0.1971 | 0.1946 | −0.0025 | 79.80 | 30.37 |
+| cadmium-7b | spec | 0.1436 | 0.1408 | −0.0028 | 50.24 | 35.96 |
+| mistral-7b-instruct | gen | 0.0467 | 0.0363 | −0.0104 | 71.20 | **10.31** |
+| qwen25-coder-7b | gen | 0.1216 | 0.1082 | −0.0134 | 12.25 | 31.98 |
+| cadfusion-v1.1 | spec | 0.1578 | 0.1398 | −0.0180 | 82.35 | 47.37 |
+| text2cad | spec | 0.1898 | 0.1537 | −0.0360 | 79.90 | 64.92 |
+
+Mean gap, **specialised** (trained on DeepCAD): **+0.0104**.
+Mean gap, **general LLMs** (never trained on DeepCAD): **+0.0043**.
+
+See §13.6 — this table refutes the naive memorisation reading rather than supporting it.
+
+### 12.6 Complexity table — Split A
+
+Score by CAD-sequence complexity bin (n_extrusions × n_curves), specialised systems:
+
+| Model | simple (128) | moderate (176) | complex (100) | very_complex (96) |
+|---|---|---|---|---|
+| text2cad | 0.3060 | 0.2026 | 0.1624 | 0.1026 |
+| cadrille | 0.2304 | 0.2281 | 0.1717 | 0.1293 |
+| t2cq-qwen-3b | 0.1782 | 0.1360 | 0.1747 | 0.1063 |
+| t2cq-mistral-7b | 0.1591 | 0.1456 | 0.1836 | 0.1170 |
+| cadfusion-v1.1 | 0.1091 | 0.0949 | 0.1298 | 0.1081 |
+| cadrille-rl | 0.0074 | 0.0059 | 0.0050 | 0.0023 |
+
+### 12.7 Failure modes — Split A, % of 500 (RQ6)
+
+| Model | family | OK | PARSE_FAIL | EXEC_FAIL | EMPTY | INVALID | NON_MANIF | TIMEOUT |
+|---|---|---|---|---|---|---|---|---|
+| t2cq-qwen-3b | spec | 92.0 | 0.6 | 4.4 | 0.0 | 0.0 | 2.8 | 0.2 |
+| t2cq-mistral-7b | spec | 89.4 | 2.6 | 4.8 | 0.2 | 0.0 | 3.0 | 0.0 |
+| text2cad | spec | 89.2 | **0.0** | 1.4 | **3.2** | **1.8** | 4.4 | 0.0 |
+| cadrille | spec | 86.6 | 0.2 | 7.2 | 0.4 | 0.0 | 5.6 | 0.0 |
+| cadfusion-v1.1 | spec | 83.8 | 5.0 | 9.4 | 0.2 | 0.6 | 1.0 | 0.0 |
+| cadrille-rl | spec | 48.0 | **52.0** | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| cadmium-7b | spec | 47.4 | 4.8 | **33.2** | 0.8 | 5.0 | 8.8 | 0.0 |
+| deepseek-coder-6.7b | gen | 44.2 | 2.4 | **50.6** | 1.6 | 0.0 | 1.2 | 0.0 |
+| qwen25-coder-32b | gen | 40.8 | 1.2 | **56.6** | 0.4 | 0.0 | 1.0 | 0.0 |
+| qwen25-coder-7b | gen | 32.2 | 0.4 | **66.2** | 0.4 | 0.0 | 0.8 | 0.0 |
+| llama3-8b-instruct | gen | 17.8 | 3.0 | **78.6** | 0.6 | 0.0 | 0.0 | 0.0 |
+| qwen2-vl-2b | gen | 7.8 | **50.0** | 41.8 | 0.4 | 0.0 | 0.0 | 0.0 |
+| mistral-7b-instruct | gen | 6.6 | 5.6 | **86.8** | 1.0 | 0.0 | 0.0 | 0.0 |
+
+Scale is not the cure: `qwen25-coder-32b` (32B, 4-bit) still fails to execute on **56.6%** of prompts,
+against 66.2% for its 7B sibling. A 4.6× parameter increase buys 10 points of executability.
+
+### 12.8 Figures produced
+
+1. `fig1_failure_modes.png` — stacked validity-code bars per model.
+2. `fig2_level_sensitivity.png` — Score vs L0→L3, one line per model. **Carries the two crossings in
+   §12.2 and is the single most important figure in the paper.**
+3. `fig3_qualitative.png` / `parts_full_splitA.png` — render grid, models × prompts, GT on top.
 
 ---
 
 ## 13. Findings and causal reasoning
 
-This is the section to mine for the paper's discussion. Each finding states what was measured, then
-the mechanism, then what can and cannot be concluded.
+Each finding: what was measured, then the mechanism, then what it does and does not license.
 
 ### 13.1 Prompt specificity dominates model identity (RQ3) — the headline finding
 
-**Measured.** Within a single model, Score varies up to **41×** across L0→L3 (cadrille: 0.0145 →
-0.5963). Across models at a fixed level, the spread is under 2× at L0 (0.0112–0.1290 excluding the
-collapsed RL model) and about 8× at L3. CD medians move by three orders of magnitude within a model:
-CADmium goes from 47.74 at L0 to **0.116** at L3 — essentially exact reconstruction.
+**Measured.** Within a model, Score varies up to **41×** across L0→L3 (cadrille 0.0145 → 0.5963).
+CD medians move three orders of magnitude within a model (CADmium L0 47.7 → L3 0.116). Across models
+*at a fixed level* the spread is far smaller: at L0 every one of the thirteen scores between 0.0015
+and 0.1290.
 
-**Mechanism.** L3 prompts are near-literal transcriptions of the CAD program: coordinate system,
-every line's start and end point, sketch scale, extrusion depth. A model trained on DeepCAD-derived
-sequence data does not need to *design* at L3 — it needs to *transcribe*, and transcription is a
-grammar-learning problem that a 2B model solves well. At L0 the same model is given a one-line
-caption and must actually infer geometry, which none of them do well.
+**Mechanism.** L3 prompts are near-literal transcriptions of the CAD program — coordinate system,
+each line's endpoints, sketch scale, extrusion depth. At L3 a model does not design, it transcribes,
+and transcription is a grammar-learning problem a 2B model solves well. At L0 it gets a one-line
+caption and must infer geometry, which none of the thirteen do well.
 
-**What this licenses.** A strong, defensible claim: **published single-number text-to-CAD results are
-dominated by prompt specificity and are not measuring design ability.** Every system in this study
-scores in a narrow, low band at L0 and the ranking at L0 is close to reversed from the pooled
-ranking. Any paper reporting one averaged number over a corpus whose prompts skew detailed is
-reporting a transcription score.
+**What it licenses.** Published single-number text-to-CAD results are dominated by prompt specificity
+and are not measuring design ability. Any paper reporting one averaged number over a corpus whose
+prompts skew detailed is reporting a transcription score.
 
-**What this does not license.** It does not show the models are *incapable* of L0 design — only that
-none of these seven do it. A general LLM baseline at L0 would sharpen this considerably, which is
-one reason the general-LLM scoring matters.
+### 13.2 The top three are tied, and the general-LLM gap is not
 
-### 13.2 The top of the leaderboard is a tie, and saying so is a contribution
+**Measured.** text2cad 0.2018 [0.1786, 0.2263], cadmium-7b 0.1991 [0.1687, 0.2302], cadrille 0.1984
+[0.1691, 0.2265] — 0.0034 apart with near-total CI overlap. By contrast every base-vs-fine-tuned
+delta in §12.3 has a CI clear of zero.
 
-**Measured.** text2cad 0.2018 [0.1786, 0.2263] vs cadrille 0.1984 [0.1691, 0.2265]. Paired bootstrap
-on the difference: **−0.0034, 95% CI [−0.0284, +0.0215]**.
+**Implication.** Report a three-way tie at the top. The benchmark has the resolution to separate
+fine-tuned from general models (Δ ≈ 0.07–0.18) but not to separate the three leaders (Δ ≈ 0.003).
+Saying so is a contribution: prior work in this area reports point estimates with no intervals, and
+at these sample sizes many published "improvements" are within noise.
 
-**Mechanism.** n = 500 prompts with a high-variance per-prompt score (most prompts score near 0, a
-minority near 1) gives a standard error on the mean of roughly 0.012 — an order of magnitude larger
-than the gap.
+### 13.3 General LLMs win at vague prompts and score exactly zero at precise ones
 
-**Implication for the field.** Prior work in this area reports point estimates with no intervals. At
-these sample sizes and this variance, a great many published "improvements" are within noise. The
-paper should report CIs on every Score and state plainly that no ranking claim is made between
-overlapping intervals. This costs nothing and is the single easiest way to make the benchmark
-defensible to a Q1 reviewer.
+**Measured.** Two crossings in §12.2. At L1, deepseek-coder-6.7b (0.1247) and qwen25-coder-32b
+(0.1276) beat cadmium-7b (0.0583) and cadrille (0.0246) by 2–5× and are within noise of text2cad
+(0.1300). At L3, llama3-8b-instruct and mistral-7b-instruct score **exactly 0.0000**, qwen25-coder-32b
+0.0017, while cadrille reaches 0.5963 — a **350×** gap on the same 125 prompts.
+Llama-3-8B-Instruct produced **zero valid solids across all 125 L3 prompts** (§12.4).
 
-### 13.3 CADmium has the best geometry and the worst reliability — and they are different axes
+**Mechanism.** L3 prompts are long (median 539 BERT tokens, max 2,258) and numerically dense. General
+LLMs asked to transcribe hundreds of coordinates into CadQuery degenerate into repetition loops and
+run out of budget mid-expression — visible directly in qwen2-vl-2b's outputs, where `.cut(...)` calls
+repeat verbatim until the cap. The fine-tuned models learned a compact grammar for exactly this and
+emit it in a few hundred tokens.
 
-**Measured.** CADmium is **best on every conditional geometry metric**: CD median 27.06 (next best
-44.34), F1@0.02 0.3939 (next 0.2271), IoU 0.4224 (next 0.2145), HD95 0.241 (next 0.306). At L3 it
-reaches CD 0.116 / F1 0.894 / IoU 0.884 — near-perfect reconstruction. And it has the **worst**
-P(OK) of any non-collapsed model: 0.384, i.e. **IR 61.6%**.
+**What it licenses.** The strongest claim in the study: **CAD fine-tuning on DeepCAD buys almost
+nothing when the prompt is vague, and buys everything when the prompt is a transcription.** A
+benchmark whose prompt corpus skews to either end reaches the opposite conclusion from one skewed to
+the other — which is precisely why the field's numbers disagree.
 
-**Mechanism.** Its failures are almost entirely *format*, not geometry: 23.6% PARSE_FAIL + 26.8%
-EXEC_FAIL = 50.4% of samples never reach the geometry stage. Of the 118 Split A parse failures,
-**109 (92%) were outputs truncated mid-number by our token budget** (§13.8). Its minimal-JSON
-representation is the most verbose in the study — pretty-printed JSON at ~3.1 chars/token — so it
-pays the highest token cost per unit of geometry.
+**What it does not license.** It does not show general LLMs are better designers at L0; every model
+is poor there in absolute terms (best 0.1290 of a possible 1.0). The honest statement is that at L0
+the specialised systems have not earned their fine-tuning.
 
-**What this means for the paper.** `Score = P(OK) × F1` is doing exactly what it was designed to do:
-it refuses to reward a model that produces beautiful geometry 38% of the time. But the decomposition
-must be reported alongside it, because "CADmium is 3rd" and "CADmium has the best geometry of any
-system tested, conditional on producing output" are both true and the second is the more interesting
-sentence. **Report P(OK) and conditional-F1 as separate columns, never Score alone.**
+### 13.4 Fine-tuning buys reliability, not always geometry
 
-### 13.4 cadrille-RL is a strong negative result about RL fine-tuning
+**Measured** (§12.4, matched subsets). On prompts both models built: CADFusion is **worse** than its
+own base — F1 0.140 vs Llama-3's 0.233, CD 55.2 vs 32.5 — while its IR falls 82.2% → 16.2%. cadrille
+improves both (F1 0.185 → 0.377, IR 92.2% → 13.4%). CADmium improves both modestly (F1 0.208 → 0.283).
 
-**Measured.** cadrille-rl collapses: Score 0.0054 against the SFT checkpoint's 0.1984 — a **37×
-degradation from the same base model**. 52.0% PARSE_FAIL, all of it token soup. Voxel IoU is
-8.5 × 10⁻⁷, i.e. indistinguishable from zero. The collapse is **level-dependent and monotone**: IR
-0.8% at L0, 15.2% at L1, **93.6% at L2, 98.4% at L3**.
+**Mechanism.** A base LLM emitting CadQuery succeeds only on the small easy tail it can express in a
+few lines; conditional on succeeding it does reasonably. Fine-tuning trades some conditional fidelity
+for a vastly larger success set.
 
-**Mechanism.** The failure is not uniform degradation — at L0 it is *more* valid than the SFT model
-(IR 0.8% vs 8.0%). It breaks specifically on **long prompts**. This is the signature of RL narrowing
-the policy onto short, in-distribution inputs: the reward was computed on cadrille's own short
-single-sentence descriptions, and the resulting policy does not survive a 539-token L3 prompt.
+**What it licenses.** `Score = P(OK) × F1` is doing real work here. A leaderboard on median-CD-over-
+valid-only would rank **Llama-3-8B-Instruct above CADFusion** (35.58 vs 51.24 pooled, 32.47 vs 55.19
+matched) — an inversion produced entirely by survivorship. State this explicitly; it is the clearest
+available argument for the composite metric.
 
-**Why this is worth a paragraph in the paper.** It is a clean, controlled demonstration — same base
-model, same architecture, same prompts, same metrics, only SFT vs RL differs — that **RL fine-tuning
-on a narrow prompt distribution can destroy out-of-distribution instruction-following while
-*improving* the in-distribution validity rate.** The L0 IR improvement is what makes it a genuine
-finding rather than "the RL checkpoint is just broken".
+**Caveat.** Matched n is 36–80 and is by construction the easy tail. Descriptive, not inferential.
 
 ### 13.5 Failure mode is predicted by representation, not by quality (RQ6)
 
-**Measured.** The failure signatures cluster by *what the model emits*, not by how good it is:
-
-- **CadQuery emitters** (cadrille, both t2cq) fail at `EXEC_FAIL` (4.4–7.2%) and `NON_MANIFOLD`
-  (2.8–5.6%), with `PARSE_FAIL` ≈ 0 and `EMPTY_SOLID` ≈ 0.
-- **Sequence emitters** (text2cad) fail at `EMPTY_SOLID` (3.2%) and `INVALID_SOLID` (1.8%) — the
-  geometry stage — with `EXEC_FAIL` only 1.4%.
-- **text2cad has `PARSE_FAIL` = 0.0%, structurally.** A fixed-length integer vector cannot be
-  syntactically malformed. This is an architectural advantage that no scalar IR can show.
+**Measured.** Failure signatures cluster by what a model emits, not by how good it is.
+CadQuery emitters fail at `EXEC_FAIL` — 4.4% (t2cq-qwen) to **86.8%** (mistral-7b-instruct) — with
+`PARSE_FAIL` ≈ 0 and `EMPTY_SOLID` ≈ 0. Sequence emitters fail at the geometry stage: text2cad has
+`EMPTY_SOLID` 3.2% and `INVALID_SOLID` 1.8% with `EXEC_FAIL` only 1.4%. **text2cad's `PARSE_FAIL` is
+0.0%, structurally** — a fixed-length integer vector cannot be syntactically malformed.
 
 **Mechanism.** Each representation places the failure boundary somewhere different. Free-form code
 can fail to run but rarely fails to parse; a constrained integer vector always parses but can decode
 to a degenerate solid; verbose JSON can be truncated into unparseability.
 
-**Implication.** A single "invalidity ratio" is not a comparable quantity across representations,
-because it aggregates failures that occur at different stages of different pipelines. **The 8-way
-decomposition is the contribution here**, and the paper should argue that IR should never be
-reported as a scalar in this field again.
+**What it licenses.** A scalar invalidity ratio aggregates failures occurring at different stages of
+different pipelines and is not a comparable quantity across representations. The 8-way decomposition
+is the contribution; argue that IR should never again be reported as a scalar in this field.
 
-### 13.6 The contamination probe is underpowered and inconsistent — report it that way (RQ5)
+### 13.6 The contamination probe is refuted by its own control group (RQ5)
 
-**Measured.** Three models show a *positive* memorisation gap (t2cq-qwen +0.0455, cadrille +0.0444,
-t2cq-mistral +0.0380) and three show a *negative* one (text2cad −0.0360, cadmium −0.0241,
-cadfusion −0.0180).
+**Measured.** Mean clean→contaminated gap: **+0.0104** for the seven specialised systems trained on
+DeepCAD, **+0.0043** for the six general LLMs that were not. Individually, llama3-8b-instruct shows
+**+0.0333** — larger than four of the seven specialised systems — and its CD median improves from
+85.75 on clean to **18.15** on contaminated. mistral-7b-instruct improves from 71.20 to **10.31**.
 
-**The honest reading.** A negative gap does not mean "no memorisation" — it means the 13 clean uids
-are, as a set, *different* from the 187 contaminated ones in ways that swamp any memorisation
-signal. n_clean = 26 rows is far too small to separate the two. Note that **CD median is lower
-(better) on the contaminated slice for all 7 models**, which is consistent with memorisation *and*
-equally consistent with the contaminated slice simply containing easier shapes. The two hypotheses
-are not separated by this data.
+**Mechanism.** The general LLMs are a **negative control**: they have no DeepCAD training, so a gap
+driven by memorisation should be zero for them. It is not — it is the same sign and comparable size.
+Therefore the gap is measuring a **difficulty difference between the two slices**, not memorisation.
+The 13 clean uids are simply harder than the 187 contaminated ones.
 
-**What to write.** Report the table, report that the direction is inconsistent, and state that
-**n = 13 clean uids is insufficient to estimate memorisation** — then use the analysis for its
-stronger purpose, which is §4.5: *93.5% of CADPrompt is training data for the fine-tuned systems, so
-CADPrompt cannot be used as a headline benchmark comparing fine-tuned CAD models against general
-LLMs.* That claim needs no statistical power; it is a fact about the uid lists. It is also, bluntly,
-a finding about published work that used CADPrompt that way.
+**What to write.** Do **not** claim a memorisation effect was measured — the control refutes it, and
+n_clean = 13 uids could not have supported the claim anyway. Instead report this as a methodological
+result: *a clean-vs-contaminated score gap is not by itself evidence of memorisation, and running
+never-trained models through the same split is a cheap control that can falsify it.* That is a
+transferable contribution, and it is more interesting than the finding it replaces.
 
-**Do not** claim a memorisation effect was measured. A reviewer will check n and the sign
-inconsistency, and the rest of the paper will lose credibility with it.
+Then use CADPrompt for the claim that needs no statistical power (§4.5): **93.5% of it is training
+data for the fine-tuned systems, so it cannot serve as a headline benchmark comparing them against
+general LLMs.** That is a fact about uid lists, and it stands regardless of this table.
 
-### 13.7 CADFusion's inverted level trend is real behaviour, not an artefact
+### 13.7 cadrille-RL: RL fine-tuning made the model worse than no fine-tuning at all
 
-**Measured.** CADFusion is the only system whose Score *decreases* monotonically with prompt detail:
-L0 0.1290 → L1 0.1261 → L2 0.1033 → L3 0.0738. Its IR rises the same way: 7.2% → 14.4% → 19.2% → 24.0%.
-It is the **best model in the study at L0** and 6th at L3.
+**Measured.** cadrille-rl scores 0.0054 against SFT's 0.1984 (37× worse from the same base) and —
+critically — against its **own un-fine-tuned base model's 0.0153**: Δ = **−0.0099, CI [−0.0170,
+−0.0034], significant**. 52.0% PARSE_FAIL, all token soup; voxel IoU 8.5 × 10⁻⁷. The collapse is
+monotone in prompt length: IR 0.8% at L0, 15.2% at L1, **93.6% at L2, 98.4% at L3**.
 
-**Mechanism, verified.** Two causes, and it was worth separating them:
-1. **Training distribution.** CADFusion is trained on SkexGen with LLM-generated single-sentence
-   *visual captions* ("a twelve-sided prism base with a large central circular cutout"). That is an
-   L0-style prompt. L3 is severely out of distribution for it in a way it is not for the other six.
-2. **Its own generation cap.** 512 tokens (`MAX_LENGTH` from its own inference code). Measured on the
-   run: **4.6% of Split A outputs do not end with `<extrude_end>`** (cut mid-sequence) and **2.4%
-   contain no `<extrude_end>` at all**.
+**Mechanism.** At L0 it is *more* valid than the SFT model (IR 0.8% vs 8.0%) — so this is not uniform
+degradation, it is a policy narrowed onto short in-distribution inputs. The reward was computed on
+cadrille's own short single-sentence descriptions, and the resulting policy does not survive a
+539-token L3 prompt.
 
-I initially suspected truncation was the whole story; measuring it showed 4.6% cannot explain a
-43% relative Score drop. **Cause 1 dominates.** This is worth reporting as a methodological point:
-an inverted trend invites a "your harness is broken" reading, and the truncation measurement is what
-rules that out.
-
-**What it licenses.** The strongest available evidence that the L0–L3 axis measures *distribution
-match*, not difficulty. Every model peaks where its training prompts sit. That reframes the whole
-benchmark: **these systems are not ranked, they are positioned.**
+**What it licenses.** A clean controlled demonstration — same base, same architecture, same prompts,
+same metrics, SFT vs RL the only difference — that **RL on a narrow prompt distribution can destroy
+out-of-distribution instruction-following while improving in-distribution validity, to the point of
+scoring below the un-fine-tuned base model.** The L0 improvement is what makes this a finding rather
+than "the checkpoint is broken".
 
 ### 13.8 Benchmark design choices moved the ranking more than the models differ
 
-This is the methodological contribution, and it is unusual because it is an audit of our *own*
-harness. Two defects were found after the first full run, each of which changed the answer.
+The methodological contribution, and it is an audit of our *own* harness. Three defects were found
+after the first full run; each changed the answer.
 
-**(a) The Score definition inverted the top two.** The design document specified
-`Score = P(OK) × F1`, but the implementation summed F1 over all *scored* rows — including
-`NON_MANIFOLD`, which is measurable but is not a closed solid. Implemented: cadrille 0.2094 vs
-text2cad 0.2092. As documented: text2cad 0.2018 vs cadrille 0.1984. **A one-line disagreement between
-the spec and the code flipped first place.** Both differences are smaller than the CI, which is
-itself the point: a leaderboard reported without intervals would have presented either ordering as a
-result.
+**(a) The Score definition inverted the top two.** The design doc specified `Score = P(OK) × F1`; the
+implementation summed F1 over all *scored* rows including `NON_MANIFOLD`, which is measurable but not
+a closed solid. Implemented: cadrille 0.2094 vs text2cad 0.2092. As documented: text2cad 0.2018 vs
+cadrille 0.1984. **A one-line spec/code disagreement flipped first place.**
 
-**(b) The token budget cost CADmium 22% of its samples.** A flat 1024-token budget "for everyone"
-is not equal treatment, because the budget is denominated in a representation-dependent currency.
-CADmium's pretty-printed JSON runs ~3.1 chars/token against ~2.6 for CadQuery. Measured: **109 of its
-500 Split A outputs were truncated mid-number** and scored `PARSE_FAIL`, and its longest *complete*
-output was 1,019 tokens against a 1,024 cap — **the cap was binding exactly at the boundary.** Its
-budget is now 2048 and it is being regenerated.
+**(b) The token budget cost CADmium 22% of its samples — measured before and after.** A flat 1024
+budget is not equal treatment: CADmium's pretty-printed JSON costs ~3.1 chars/token against ~2.6 for
+CadQuery. Its longest *complete* output was 1,019 tokens against a 1,024 cap. Raising it to 2048 and
+regenerating:
 
-**The general rule to state in the paper.** *A token budget shared across systems that emit different
-representations is not a fair budget.* The check is cheap and should be standard: count the outputs
-that do not end in the format's own terminator. (When we first ran this check, our terminator
-predicate returned `True` unconditionally for three of the models, making their "0.0% truncation"
-vacuous — so the check also has to be checked.)
+| | 1024 tokens | 2048 tokens |
+|---|---|---|
+| PARSE_FAIL | 23.6% | **4.8%** |
+| P(OK) | 0.384 | **0.474** |
+| CD median | 27.06 | 26.31 |
+| F1@0.02 (conditional) | 0.3939 | **0.3938** |
+| **Score** | 0.1633 | **0.1991** |
+| rank | 3rd, clear margin | **tied 1st** |
+
+Conditional geometry is unchanged to four decimal places — the budget never affected what CADmium
+could *build*, only how many outputs survived to be built. **A benchmark parameter moved a model from
+a clear third place into a three-way tie for first**, while the model itself did not change: greedy
+decoding made 370 of its complete outputs byte-identical across the two runs.
+
+**(c) An extraction fallback was worth 80% of a model.** llama3-8b-instruct leaves **79.8%** of its
+Split A code fences unclosed (81.0% on Split B) — it simply omits the trailing fence. Its code is
+complete and compiles 97.0% of the time. The adapter's unclosed-fence fallback recovers all of it
+(0 empty extractions across 4,800 general-LLM outputs). Without that one regex llama3 would have
+scored ~80% `PARSE_FAIL` and **CADFusion's ablation would have been meaningless**.
+
+**The general rule for the paper.** *A token budget shared across systems that emit different
+representations is not a fair budget, and an output-format convention is not a capability.* Both
+checks are cheap: count outputs that do not end in the format's own terminator, and count how often
+each leniency rule fires per model. (When we first ran the terminator check our predicate returned
+`True` unconditionally for three models, making their "0.0% truncation" vacuous — so the check needs
+checking too.)
 
 **Additional harness defects found by audit**, each of which would have produced a plausible-looking
 but wrong row:
 
 | Defect | Consequence if unfixed |
 |---|---|
-| `T2CBENCH_CADFUSION_PATH` import root was `src`, not `src/rendering_utils` | 100% `EXEC_FAIL` for CADFusion — would have read as "CADFusion cannot produce geometry" |
+| CADFusion import root `src` instead of `src/rendering_utils` | 100% `EXEC_FAIL` — reads as "CADFusion cannot produce geometry" |
 | Text-to-CadQuery Mistral given the `### Instruction:` scaffold | echoes the prompt, emits no code — reads as "cannot do CAD" |
 | `run_all.sh` roster drift | 5 of 13 models silently absent; CADFusion loading `v1_0` not `v1_1`; wrong Mistral base |
-| Split `gt_mesh` paths not portable across machines | 500/500 Split A rows pointed at a `GT_ROOT/` placeholder; would surface as model invalidity |
+| Split `gt_mesh` paths not portable | 500/500 Split A rows pointed at a placeholder; would surface as model invalidity |
 | Qwen2-VL-2B not registered for `AutoModelForCausalLM` | cadrille's base-model ablation impossible to run |
-| `tables.py` empty-slice crash on the empty best-of-k frame | report generation dies *after* all GPU work is done |
+| `tables.py` empty-slice crash | report generation dies *after* all GPU work is done |
 
-**Framing for the paper.** Report these as a *benchmark-engineering* section, not an apology. The
-defensible claim is: **we audited the harness against recorded artefacts and found that protocol
-defects moved results by more than the between-model differences we were trying to measure — which is
-strong evidence that this field's published comparisons, none of which report such an audit, are not
-reliable.**
+**Framing.** Report these as a benchmark-engineering section, not an apology. The defensible claim:
+**we audited the harness against recorded artefacts and found that protocol defects moved results by
+more than the between-model differences we were trying to measure — evidence that this field's
+published comparisons, none of which report such an audit, are not reliable.**
 
-### 13.9 Scale of the fine-tuning effect, so far
+### 13.9 Scale is not the cure
 
-Pending general-LLM scores, one thing is already visible: **the two Text-to-CadQuery models are
-nearly indistinguishable from each other despite a 2.3× parameter difference** (3B: Score 0.1488;
-7B: 0.1512; CIs overlap almost completely). Within that family, scale buys nothing measurable.
-Whether *any* of the fine-tuned systems beat their own base model is the question the ablation table
-will answer, and it is the paper's most valuable single result.
+**Measured.** qwen25-coder-32b (32B, 4-bit) still fails to execute on **56.6%** of Split A prompts,
+against 66.2% for qwen25-coder-7b — a 4.6× parameter increase buying ten points of executability and
+a Score of 0.0813 vs 0.0714 (overlapping CIs). Within Text-to-CadQuery, the 7B LoRA and the 3B full
+fine-tune are statistically indistinguishable: Δ = +0.0023, CI [−0.0109, +0.0140].
+
+**What it licenses.** On this task, within the ranges tested, parameter count is not the binding
+constraint — representation and fine-tuning are. A 2B fine-tune (cadrille, 0.1984) beats a 32B
+general model (0.0813) by 2.4×.
 
 ---
 
@@ -963,6 +1040,8 @@ Checked against the recorded artefacts of the 6,300-generation run:
 | Decoding identical | `do_sample=False` for all; each model's own bundled sampling config is explicitly overridden |
 | Native scaffolds are the checkpoints', not ours | each transcribed from that repo's inference script and cross-checked against `adapter_config.json` |
 | Adapter leniency not tilted | §14.3 |
+| No model refused or emitted prose only | 0 refusal-pattern hits and 0 empty extractions across all 4,800 general-LLM outputs, both splits |
+| Output format never charged as incapacity | every general LLM's extracted code was non-empty; compile rates 94.4–100% except where the model genuinely looped (§13.8c) |
 | Machine load absent from results | 1 `TIMEOUT` in 6,300 samples (0.02%), against a 2% warning threshold |
 | Scoring path agrees with itself | `evaluate.py` and `score_export.py` match to printed precision on identical inputs |
 | Ground truth identical for all | one `gt_mesh` per uid, resolved from the uid, shared across every model's scoring |
@@ -978,6 +1057,10 @@ measured per model:
   exists for them but never fires.
 - The same class of repair **rescued 46 CADmium samples** (null-part dropping).
 - The multi-body assembly rule moved CADmium from 1/3 to 3/3 valid on a smoke sample.
+- The **unclosed-fence** fallback fired on **399/500** llama3-8b-instruct outputs (Split A; 324/400 on
+  Split B), **253/500** for qwen2-vl-2b, and **2/500** for qwen25-coder-7b. It is worth 80% of
+  llama3's samples and nothing at all to the model that formats cleanly — leniency available to
+  everyone, realised only where each model needs it.
 
 **The generous path exists for every representation and is used only where needed.** That is the
 fairness argument: leniency is available symmetrically and its realised effect is asymmetric only
@@ -1043,30 +1126,25 @@ A reviewer will find each of these. Stating them first is cheaper than being cau
 ### 16.1 Complete
 
 - Both splits built, 900 prompts, reproducible from `seed=0`.
-- All 7 specialised systems generated (6,300 outputs) and scored.
-- Six tables + `RESULTS.md` generated; qualitative parts-grid figure rendered.
+- **All 13 systems generated and scored: 11,700 samples, 0 timeouts, 0 harness errors.**
+- CADmium regenerated at the corrected 2048-token budget; the fix verified by byte-comparison against
+  run 1 (370/370 complete outputs identical, 130/130 truncated outputs extended).
+- Llama-3-8B-Instruct licence cleared; all four ablation pairs populated with paired CIs.
+- Six tables + `RESULTS.md`; qualitative parts-grid figure rendered.
 - Full fairness audit of the harness against recorded artefacts (§13.8, §14).
 
-### 16.2 In flight
+### 16.2 Outstanding
 
-- **CADmium re-run** against the corrected 2048-token budget. Its current Score (0.1633) is a lower
-  bound; it will rise. Every CADmium number in §12 must be regenerated before publication.
-- **`llama3-8b-instruct`** — blocked on the Meta licence for the *Instruct* repo, which is a separate
-  acceptance from the base repo CADFusion uses. Without it, CADFusion has no ablation partner.
-
-### 16.3 Outstanding
-
-- Score the 5 completed general-LLM runs (10 files) → fills §12.6 and the ablation table.
-- Optional `--zero-shot` general-LLM variant (12 jobs) → quantifies format-compliance vs geometry.
-- **best-of-5 table** — not yet run. This is what makes the numbers comparable to the published
-  best-of-N results, and its absence is currently the largest gap in the comparison-with-prior-work
-  story.
+- **best-of-5 table** — not yet run. This is what makes our numbers comparable to the published
+  best-of-N results, and its absence is the largest remaining gap in the comparison-with-prior-work
+  story. `02_best_of_k_splitA.csv` is empty by construction until then.
 - Sequence-F1 table for the three sequence-emitting systems.
+- Optional `--zero-shot` general-LLM variant (12 jobs) — quantifies format compliance vs geometry.
 - Level-sensitivity and failure-mode figures at final data.
-- The back-fill path in `evaluate.py` has never actually fired (every model returned exactly 500/400)
-  and is therefore untested.
+- The back-fill path in `evaluate.py` has still never fired (every model returned exactly 500/400)
+  and remains untested.
 
-### 16.4 Reproducibility checklist
+### 16.3 Reproducibility checklist
 
 | Item | Where |
 |---|---|
@@ -1096,7 +1174,7 @@ recomputed from the artefacts without re-running a GPU.
 | **5. Evaluation set** | Split A construction incl. dedup calibration; Split B as a probe not a leaderboard. | §5 |
 | **6. Experimental setup** | Models, prompts, token budgets, sampling, hardware. | §3, §8, §10 |
 | **7. Results** | Main table w/ CIs; per-level table; complexity; failure modes; contamination; ablation. | §12 |
-| **8. Analysis** | Prompt specificity dominates (41×); the tie; CADmium's geometry/reliability split; the RL collapse; representation-structured failure; CADFusion's inversion. | §13.1–13.7 |
+| **8. Analysis** | Prompt specificity dominates (41×); the three-way tie; general LLMs win at L0/L1 and score 0.0000 at L3; fine-tuning buys reliability not geometry; the RL model losing to its own base; representation-structured failure; CADFusion's inversion; the contamination control. | §13.1–13.7, §13.9 |
 | **9. Benchmark engineering** | The self-audit: protocol defects moved the ranking by more than the models differ. | §13.8, §14 |
 | **10. Threats to validity** | All twelve, up front. | §15 |
 | **11. Conclusion** | These systems are positioned, not ranked. IR should never again be a scalar. Report CIs. | §13 |
@@ -1109,6 +1187,8 @@ recomputed from the artefacts without re-running a GPU.
    visually, and justifies the 8-code taxonomy in one glance.
 3. **Qualitative grid** (`fig3` / `parts_full_splitA.png`) — models × prompts with GT on top and
    CD/IoU per cell. Reviewers in this field expect to see the parts.
+4. **Ablation bars** (§12.3) — base vs fine-tuned Score with paired CIs, four pairs. One bar goes the
+   wrong way (cadrille-rl), which is the point.
 
 ### 17.2 Three sentences that should appear somewhere verbatim
 
@@ -1118,6 +1198,12 @@ recomputed from the artefacts without re-running a GPU.
 
 > A scalar invalidity ratio aggregates failures occurring at different stages of different
 > pipelines, and is not a comparable quantity across representations.
+
+> A clean-vs-contaminated score gap is not by itself evidence of memorisation: models that never saw
+> the training data show the same gap.
+
+> CAD fine-tuning on DeepCAD buys almost nothing when the prompt is vague and everything when the
+> prompt is a transcription.
 
 ---
 

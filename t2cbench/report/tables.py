@@ -217,6 +217,37 @@ def table_contamination(df: pd.DataFrame) -> pd.DataFrame:
     return piv.reset_index(drop=True)
 
 
+def _per_prompt_scores(df: pd.DataFrame, model: str) -> pd.Series:
+    """Per-prompt Score contribution for one model, indexed by sample_id.
+
+    Same definition as `aggregate`: F1@0.02 where the sample produced a closed
+    solid, zero everywhere else (a failure is a zero, never a missing value).
+    Indexing by sample_id is what makes the ablation bootstrap *paired* -- both
+    models are resampled on the same prompts, so the prompt-difficulty variance
+    that dominates this benchmark cancels instead of being counted twice.
+    """
+    g = df[df["model"] == model]
+    ok = (g["validity"] == "OK") & g["f1_002"].notna()
+    return pd.Series(np.where(ok, g["f1_002"].fillna(0.0), 0.0),
+                     index=g["sample_id"]).groupby(level=0).first()
+
+
+def _paired_delta_ci(df: pd.DataFrame, base: str, tuned: str,
+                     n_boot: int = 2000, seed: int = 0) -> tuple:
+    """Bootstrap CI for (tuned - base) Score, resampling prompts jointly."""
+    b = _per_prompt_scores(df, base)
+    t = _per_prompt_scores(df, tuned)
+    common = b.index.intersection(t.index)
+    if len(common) < 2:
+        return (float("nan"), float("nan"), 0)
+    d = (t.loc[common] - b.loc[common]).to_numpy(dtype=float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(d), size=(n_boot, len(d)))
+    means = d[idx].mean(axis=1)
+    lo, hi = np.percentile(means, (2.5, 97.5))
+    return float(lo), float(hi), int(len(common))
+
+
 def table_ablation(df: pd.DataFrame, pairs: list[tuple[str, str]]) -> pd.DataFrame:
     """Base LLM vs its fine-tuned descendant, same weights, same prompts."""
     a = aggregate(select_pass_at_1(df[df["split"] == "A"]), ["model"]).set_index("model")
@@ -231,6 +262,13 @@ def table_ablation(df: pd.DataFrame, pairs: list[tuple[str, str]]) -> pd.DataFra
             "CD_median_base": a.at[base, "CD_median"], "CD_median_ft": a.at[tuned, "CD_median"],
             "IR_base_%": a.at[base, "IR_%"], "IR_ft_%": a.at[tuned, "IR_%"],
         })
+        # The delta is the paper's headline ablation number, so it carries an
+        # interval for the same reason every Score does. Paired over prompts.
+        lo, hi, n_pair = _paired_delta_ci(select_pass_at_1(df[df["split"] == "A"]),
+                                          base, tuned)
+        rows[-1].update({"Score_delta_lo": lo, "Score_delta_hi": hi,
+                         "n_paired": n_pair,
+                         "significant": bool(n_pair and not (lo <= 0.0 <= hi))})
     return pd.DataFrame(rows)
 
 
